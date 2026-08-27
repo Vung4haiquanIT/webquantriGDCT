@@ -1490,5 +1490,373 @@ export const firestoreService = {
         }
       ]
     };
+  },
+
+  // -------------------------------------------------------------
+  // ROBUST CASCADE DELETE & ORPHAN SCANNING ENGINE
+  // -------------------------------------------------------------
+  deleteSlideCascade: async (slideId: string): Promise<{ success: boolean; cloudinaryDeleted: boolean }> => {
+    const docRef = doc(db, 'slides', slideId);
+    const snap = await getDoc(docRef);
+    let cloudinaryDeleted = true;
+    if (snap.exists()) {
+      const data = snap.data() as SlideItem;
+      const pubId = data.cloudinaryPublicId || data.storagePath;
+      if (pubId) {
+        cloudinaryDeleted = await deleteCloudinaryAssetHelper(pubId, 'image');
+      }
+      await deleteDoc(docRef);
+    }
+    return { success: true, cloudinaryDeleted };
+  },
+
+  deleteVideoCascade: async (videoId: string): Promise<{ success: boolean; cloudinaryDeleted: boolean }> => {
+    const docRef = doc(db, 'videos', videoId);
+    const snap = await getDoc(docRef);
+    let cloudinaryDeleted = true;
+    if (snap.exists()) {
+      const data = snap.data() as VideoItem;
+      const pubId = data.cloudinaryPublicId || data.storagePath;
+      if (pubId) {
+        cloudinaryDeleted = await deleteCloudinaryAssetHelper(pubId, 'video');
+      }
+      await deleteDoc(docRef);
+    }
+    return { success: true, cloudinaryDeleted };
+  },
+
+  deleteAudioCascade: async (audioId: string): Promise<{ success: boolean; cloudinaryDeleted: boolean }> => {
+    const docRef = doc(db, 'audios', audioId);
+    const snap = await getDoc(docRef);
+    let cloudinaryDeleted = true;
+    if (snap.exists()) {
+      const data = snap.data() as AudioItem;
+      const pubId = data.cloudinaryPublicId || data.storagePath;
+      if (pubId) {
+        cloudinaryDeleted = await deleteCloudinaryAssetHelper(pubId, data.resourceType || 'video');
+      }
+      await deleteDoc(docRef);
+    }
+    return { success: true, cloudinaryDeleted };
+  },
+
+  deleteLessonCascade: async (lessonId: string): Promise<DeleteReport> => {
+    try {
+      const lessonRef = doc(db, 'lessons', lessonId);
+      const lessonSnap = await getDoc(lessonRef);
+      const lessonData = lessonSnap.exists() ? (lessonSnap.data() as Lesson) : null;
+
+      const [
+        contentsSnap,
+        sectionsSnap,
+        itemsSnap,
+        questionsSnap,
+        slidesSnap,
+        slideSetsSnap,
+        videosSnap,
+        audiosSnap,
+        documentsSnap,
+        itemProgSnap,
+        secProgSnap,
+        progressSnap
+      ] = await Promise.all([
+        getDocs(query(collection(db, 'contents'), where('lessonId', '==', lessonId))),
+        getDocs(query(collection(db, 'sections'), where('lessonId', '==', lessonId))),
+        getDocs(query(collection(db, 'items'), where('lessonId', '==', lessonId))),
+        getDocs(query(collection(db, 'questions'), where('lessonId', '==', lessonId))),
+        getDocs(query(collection(db, 'slides'), where('lessonId', '==', lessonId))),
+        getDocs(query(collection(db, 'slideSets'), where('lessonId', '==', lessonId))),
+        getDocs(query(collection(db, 'videos'), where('lessonId', '==', lessonId))),
+        getDocs(query(collection(db, 'audios'), where('lessonId', '==', lessonId))),
+        getDocs(query(collection(db, 'documents'), where('lessonId', '==', lessonId))),
+        getDocs(query(collection(db, 'itemProgress'), where('lessonId', '==', lessonId))),
+        getDocs(query(collection(db, 'userSectionProgress'), where('lessonId', '==', lessonId))),
+        getDocs(query(collection(db, 'progress'), where('lessonId', '==', lessonId)))
+      ]);
+
+      const cloudinaryPromises: Promise<boolean>[] = [];
+      if (lessonData?.storageThumbnailPath) {
+        cloudinaryPromises.push(deleteCloudinaryAssetHelper(lessonData.storageThumbnailPath, 'image'));
+      }
+
+      slidesSnap.docs.forEach(d => {
+        const slide = d.data() as SlideItem;
+        const pubId = slide.cloudinaryPublicId || slide.storagePath;
+        if (pubId) cloudinaryPromises.push(deleteCloudinaryAssetHelper(pubId, 'image'));
+      });
+
+      videosSnap.docs.forEach(d => {
+        const video = d.data() as VideoItem;
+        const pubId = video.cloudinaryPublicId || video.storagePath;
+        if (pubId) cloudinaryPromises.push(deleteCloudinaryAssetHelper(pubId, 'video'));
+      });
+
+      audiosSnap.docs.forEach(d => {
+        const audio = d.data() as AudioItem;
+        const pubId = audio.cloudinaryPublicId || audio.storagePath;
+        if (pubId) cloudinaryPromises.push(deleteCloudinaryAssetHelper(pubId, audio.resourceType || 'video'));
+      });
+
+      documentsSnap.docs.forEach(d => {
+        const docItem = d.data() as SourceDocument;
+        const pubId = docItem.cloudinaryPublicId || docItem.storagePath;
+        if (pubId) cloudinaryPromises.push(deleteCloudinaryAssetHelper(pubId, docItem.resourceType || 'raw'));
+      });
+
+      const cloudinaryTotalCount = cloudinaryPromises.length;
+      let cloudinarySuccessCount = 0;
+      if (cloudinaryPromises.length > 0) {
+        const results = await Promise.all(cloudinaryPromises);
+        cloudinarySuccessCount = results.filter(Boolean).length;
+      }
+
+      const allDocsToDelete = [
+        ...contentsSnap.docs,
+        ...sectionsSnap.docs,
+        ...itemsSnap.docs,
+        ...questionsSnap.docs,
+        ...slidesSnap.docs,
+        ...slideSetsSnap.docs,
+        ...videosSnap.docs,
+        ...audiosSnap.docs,
+        ...documentsSnap.docs,
+        ...itemProgSnap.docs,
+        ...secProgSnap.docs,
+        ...progressSnap.docs,
+        lessonSnap
+      ].filter(d => d.exists());
+
+      for (let i = 0; i < allDocsToDelete.length; i += 400) {
+        const batch = writeBatch(db);
+        const chunk = allDocsToDelete.slice(i, i + 400);
+        chunk.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
+
+      const verifyCheck = await Promise.all([
+        getDocs(query(collection(db, 'contents'), where('lessonId', '==', lessonId))),
+        getDocs(query(collection(db, 'slides'), where('lessonId', '==', lessonId))),
+        getDocs(query(collection(db, 'videos'), where('lessonId', '==', lessonId)))
+      ]);
+      const totalRemaining = verifyCheck.reduce((acc, curr) => acc + curr.size, 0);
+
+      const cloudinaryStatus = cloudinaryTotalCount === 0 ? 'PASS' : (cloudinarySuccessCount === cloudinaryTotalCount ? 'PASS' : (cloudinarySuccessCount > 0 ? 'PARTIAL' : 'FAIL'));
+      const verification = totalRemaining === 0 ? 'PASS' : 'FAIL';
+
+      return {
+        success: verification === 'PASS',
+        message: `Xóa thành công bài học ${lessonId}. Đã xóa ${allDocsToDelete.length - 1} bản ghi con và ${cloudinarySuccessCount}/${cloudinaryTotalCount} file Cloudinary.`,
+        counts: {
+          lessons: 1,
+          contents: contentsSnap.size,
+          sections: sectionsSnap.size,
+          items: itemsSnap.size,
+          questions: questionsSnap.size,
+          slides: slidesSnap.size,
+          videos: videosSnap.size,
+          audios: audiosSnap.size,
+          documents: documentsSnap.size,
+          progressRecords: itemProgSnap.size + secProgSnap.size + progressSnap.size,
+          cloudinaryAssets: cloudinaryTotalCount
+        },
+        cloudinaryStatus,
+        verification
+      };
+    } catch (err: any) {
+      console.error('Error in deleteLessonCascade:', err);
+      return {
+        success: false,
+        message: `Lỗi cascade delete bài học: ${err.message}`,
+        counts: { lessons: 1, contents: 0, sections: 0, items: 0, questions: 0, slides: 0, videos: 0, audios: 0, documents: 0, progressRecords: 0, cloudinaryAssets: 0 },
+        cloudinaryStatus: 'FAIL',
+        verification: 'FAIL'
+      };
+    }
+  },
+
+  deleteCourseCascade: async (courseId: string): Promise<DeleteReport> => {
+    try {
+      const courseRef = doc(db, 'courses', courseId);
+      const courseSnap = await getDoc(courseRef);
+      const courseData = courseSnap.exists() ? (courseSnap.data() as Course) : null;
+      let cloudinarySuccessCount = 0;
+      let cloudinaryTotalCount = 0;
+
+      const cloudinaryPromises: Promise<boolean>[] = [];
+      if (courseData?.storageThumbnailPath) {
+        cloudinaryPromises.push(deleteCloudinaryAssetHelper(courseData.storageThumbnailPath, 'image'));
+      }
+
+      const lessonsSnap = await getDocs(query(collection(db, 'lessons'), where('courseId', '==', courseId)));
+      let aggregatedCounts = {
+        courses: 1,
+        lessons: lessonsSnap.size,
+        contents: 0,
+        sections: 0,
+        items: 0,
+        questions: 0,
+        slides: 0,
+        videos: 0,
+        audios: 0,
+        documents: 0,
+        progressRecords: 0,
+        cloudinaryAssets: cloudinaryTotalCount
+      };
+
+      if (cloudinaryPromises.length > 0) {
+        cloudinaryTotalCount += cloudinaryPromises.length;
+        const res = await Promise.all(cloudinaryPromises);
+        cloudinarySuccessCount += res.filter(Boolean).length;
+      }
+
+      const lessonReports = await Promise.all(lessonsSnap.docs.map(lessonDoc => firestoreService.deleteLessonCascade(lessonDoc.id)));
+      lessonReports.forEach(report => {
+        aggregatedCounts.contents += report.counts.contents;
+        aggregatedCounts.sections += report.counts.sections;
+        aggregatedCounts.items += report.counts.items;
+        aggregatedCounts.questions += report.counts.questions;
+        aggregatedCounts.slides += report.counts.slides;
+        aggregatedCounts.videos += report.counts.videos;
+        aggregatedCounts.audios += report.counts.audios;
+        aggregatedCounts.documents += report.counts.documents;
+        aggregatedCounts.progressRecords += report.counts.progressRecords;
+        aggregatedCounts.cloudinaryAssets += report.counts.cloudinaryAssets;
+      });
+
+      if (courseSnap.exists()) {
+        await deleteDoc(courseRef);
+      }
+
+      const verifyLessons = await getDocs(query(collection(db, 'lessons'), where('courseId', '==', courseId)));
+      const verifyCourse = await getDoc(courseRef);
+      const verification = (verifyLessons.empty && !verifyCourse.exists()) ? 'PASS' : 'FAIL';
+
+      return {
+        success: verification === 'PASS',
+        message: `Xóa thành công chuyên đề ${courseId} cùng ${lessonsSnap.size} bài học và toàn bộ dữ liệu con.`,
+        counts: aggregatedCounts,
+        cloudinaryStatus: 'PASS',
+        verification
+      };
+    } catch (err: any) {
+      console.error('Error in deleteCourseCascade:', err);
+      return {
+        success: false,
+        message: `Lỗi xóa chuyên đề: ${err.message}`,
+        counts: { courses: 1, lessons: 0, contents: 0, sections: 0, items: 0, questions: 0, slides: 0, videos: 0, audios: 0, documents: 0, progressRecords: 0, cloudinaryAssets: 0 },
+        cloudinaryStatus: 'FAIL',
+        verification: 'FAIL'
+      };
+    }
+  },
+
+  scanOrphanRecords: async () => {
+    const [coursesSnap, lessonsSnap, contentsSnap, sectionsSnap, itemsSnap, slidesSnap, videosSnap, audiosSnap, docsSnap] = await Promise.all([
+      getDocs(collection(db, 'courses')),
+      getDocs(collection(db, 'lessons')),
+      getDocs(collection(db, 'contents')),
+      getDocs(collection(db, 'sections')),
+      getDocs(collection(db, 'items')),
+      getDocs(collection(db, 'slides')),
+      getDocs(collection(db, 'videos')),
+      getDocs(collection(db, 'audios')),
+      getDocs(collection(db, 'documents'))
+    ]);
+
+    const courseIds = new Set(coursesSnap.docs.map(d => d.id));
+    const lessonIds = new Set(lessonsSnap.docs.map(d => d.id));
+
+    const orphanLessons = lessonsSnap.docs.filter(d => {
+      const data = d.data() as Lesson;
+      return data.courseId && !courseIds.has(data.courseId);
+    });
+
+    const orphanContents = contentsSnap.docs.filter(d => {
+      const data = d.data() as any;
+      return data.lessonId && !lessonIds.has(data.lessonId);
+    });
+
+    const orphanSections = sectionsSnap.docs.filter(d => {
+      const data = d.data() as any;
+      return data.lessonId && !lessonIds.has(data.lessonId);
+    });
+
+    const orphanItems = itemsSnap.docs.filter(d => {
+      const data = d.data() as any;
+      return data.lessonId && !lessonIds.has(data.lessonId);
+    });
+
+    const orphanSlides = slidesSnap.docs.filter(d => {
+      const data = d.data() as any;
+      return data.lessonId && !lessonIds.has(data.lessonId);
+    });
+
+    const orphanVideos = videosSnap.docs.filter(d => {
+      const data = d.data() as any;
+      return data.lessonId && !lessonIds.has(data.lessonId);
+    });
+
+    const orphanAudios = audiosSnap.docs.filter(d => {
+      const data = d.data() as any;
+      return data.lessonId && !lessonIds.has(data.lessonId);
+    });
+
+    const orphanDocs = docsSnap.docs.filter(d => {
+      const data = d.data() as any;
+      return data.lessonId && !lessonIds.has(data.lessonId);
+    });
+
+    const totalOrphans = orphanLessons.length + orphanContents.length + orphanSections.length + orphanItems.length + orphanSlides.length + orphanVideos.length + orphanAudios.length + orphanDocs.length;
+
+    return {
+      totalOrphans,
+      details: {
+        lessons: orphanLessons.map(d => ({ id: d.id, title: (d.data() as any).title })),
+        contents: orphanContents.map(d => d.id),
+        sections: orphanSections.map(d => d.id),
+        items: orphanItems.map(d => d.id),
+        slides: orphanSlides.map(d => d.id),
+        videos: orphanVideos.map(d => d.id),
+        audios: orphanAudios.map(d => d.id),
+        documents: orphanDocs.map(d => d.id)
+      }
+    };
   }
 };
+
+async function deleteCloudinaryAssetHelper(publicId?: string, resourceType = 'image'): Promise<boolean> {
+  if (!publicId) return true;
+  try {
+    const resp = await fetch('/api/cloudinary/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ publicId, resourceType })
+    });
+    const json = await resp.json();
+    return !!json.success;
+  } catch (err) {
+    console.warn('Cloudinary delete error:', err);
+    return false;
+  }
+}
+
+export interface DeleteReport {
+  success: boolean;
+  message: string;
+  counts: {
+    courses?: number;
+    lessons: number;
+    contents: number;
+    sections: number;
+    items: number;
+    questions: number;
+    slides: number;
+    videos: number;
+    audios: number;
+    documents: number;
+    progressRecords: number;
+    cloudinaryAssets: number;
+  };
+  cloudinaryStatus: 'PASS' | 'FAIL' | 'PARTIAL';
+  verification: 'PASS' | 'FAIL';
+}

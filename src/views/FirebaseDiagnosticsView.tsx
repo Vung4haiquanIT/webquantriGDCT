@@ -16,9 +16,10 @@ import {
 import { runFirebaseLiveDiagnostics, runCloudinaryDiagnostics, FirebaseTestResult, CloudinaryTestResult } from '../services/firebaseDiagnostics';
 import { CloudinaryUnsignedUploadTest } from '../components/CloudinaryUnsignedUploadTest';
 import { DongSonDrum, DongSonBorder } from '../components/DongSonMotif';
+import { firestoreService } from '../services/firestoreService';
 
 export const FirebaseDiagnosticsView: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'firebase' | 'cloudinary'>('cloudinary');
+  const [activeTab, setActiveTab] = useState<'firebase' | 'cloudinary' | 'orphans'>('cloudinary');
   const [isRunning, setIsRunning] = useState<boolean>(false);
   const [hasRun, setHasRun] = useState<boolean>(false);
   const [currentStepInfo, setCurrentStepInfo] = useState<string>('');
@@ -35,6 +36,25 @@ export const FirebaseDiagnosticsView: React.FC = () => {
     results: CloudinaryTestResult[];
   } | null>(null);
   const [expandedStep, setExpandedStep] = useState<number | string | null>(null);
+
+  // Orphan scan state
+  const [orphanData, setOrphanData] = useState<{ totalOrphans: number; details: any } | null>(null);
+  const [isScanningOrphans, setIsScanningOrphans] = useState(false);
+  const [orphanMessage, setOrphanMessage] = useState('');
+
+  const handleScanOrphans = async () => {
+    setIsScanningOrphans(true);
+    setOrphanMessage('Đang quét toàn bộ Firestore tìm dữ liệu mồ côi...');
+    try {
+      const res = await firestoreService.scanOrphanRecords();
+      setOrphanData(res);
+      setOrphanMessage(`Quét hoàn tất. Tìm thấy ${res.totalOrphans} bản ghi mồ côi.`);
+    } catch (err: any) {
+      setOrphanMessage(`Lỗi quét mồ côi: ${err.message}`);
+    } finally {
+      setIsScanningOrphans(false);
+    }
+  };
 
   const handleRunAllTests = async () => {
     try {
@@ -183,6 +203,23 @@ export const FirebaseDiagnosticsView: React.FC = () => {
           {testResult && (
             <span className={`text-[10px] px-2 py-0.5 rounded-full font-extrabold ${testResult.allPassed ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
               {testResult.allPassed ? 'PASSED' : 'CHECK'}
+            </span>
+          )}
+        </button>
+
+        <button
+          onClick={() => setActiveTab('orphans')}
+          className={`flex items-center space-x-2 px-5 py-3 font-bold text-xs uppercase tracking-wider rounded-t-xl transition-all border-t border-x ${
+            activeTab === 'orphans'
+              ? 'bg-white border-slate-300 text-amber-700 shadow-xs'
+              : 'bg-slate-100 border-transparent text-slate-500 hover:bg-slate-200'
+          }`}
+        >
+          <ShieldCheck className="w-4 h-4 text-amber-600" />
+          <span>Quét Dữ Liệu Mồ Côi</span>
+          {orphanData && (
+            <span className={`text-[10px] px-2 py-0.5 rounded-full font-extrabold ${orphanData.totalOrphans === 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+              {orphanData.totalOrphans} MỒ CÔI
             </span>
           )}
         </button>
@@ -464,6 +501,80 @@ export const FirebaseDiagnosticsView: React.FC = () => {
               );
             })}
           </div>
+        </div>
+      )}
+
+      {/* TAB 3: ORPHAN SCAN & CLEANUP */}
+      {activeTab === 'orphans' && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden p-6 space-y-6">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-5">
+            <div>
+              <div className="inline-flex items-center space-x-2 text-amber-600 bg-amber-50 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider border border-amber-200 mb-2">
+                <Database className="w-3.5 h-3.5" />
+                <span>Kiểm Tra Chuyên Sâu • Data Integrity & Cascade Audit</span>
+              </div>
+              <h2 className="text-xl font-black text-slate-900">CHẨN ĐOÁN DỮ LIỆU MỒ CÔI & THAM CHIẾU HỎNG</h2>
+              <p className="text-xs text-slate-500 mt-1 max-w-2xl">
+                Quét toàn bộ các collection (lessons, contents, sections, slides, videos, audios, documents) để phát hiện và làm sạch các bản ghi mồ côi (không còn gắn với Course hoặc Lesson tồn tại).
+              </p>
+            </div>
+
+            <button
+              onClick={handleScanOrphans}
+              disabled={isScanningOrphans}
+              className="bg-amber-600 hover:bg-amber-700 text-slate-950 font-black px-6 py-3 rounded-xl shadow-md transition-all text-xs tracking-wider uppercase flex items-center justify-center space-x-2 disabled:opacity-50 shrink-0"
+            >
+              <RefreshCw className={`w-4 h-4 ${isScanningOrphans ? 'animate-spin' : ''}`} />
+              <span>{isScanningOrphans ? 'ĐANG QUÉT MỒ CÔI...' : 'QUÉT DỮ LIỆU MỒ CÔI'}</span>
+            </button>
+          </div>
+
+          {orphanMessage && (
+            <div className="p-4 bg-blue-50/80 border border-blue-200 rounded-xl text-xs font-semibold text-blue-900">
+              {orphanMessage}
+            </div>
+          )}
+
+          {orphanData && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-center">
+                  <div className="text-2xl font-black text-slate-900">{orphanData.totalOrphans}</div>
+                  <div className="text-[11px] font-bold text-slate-500 uppercase mt-1">Tổng Mồ Côi</div>
+                </div>
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-center">
+                  <div className="text-2xl font-black text-rose-600">{orphanData.details.lessons.length}</div>
+                  <div className="text-[11px] font-bold text-slate-500 uppercase mt-1">Bài học mồ côi</div>
+                </div>
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-center">
+                  <div className="text-2xl font-black text-amber-600">{orphanData.details.slides.length}</div>
+                  <div className="text-[11px] font-bold text-slate-500 uppercase mt-1">Slide mồ côi</div>
+                </div>
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-center">
+                  <div className="text-2xl font-black text-blue-600">{orphanData.details.documents.length}</div>
+                  <div className="text-[11px] font-bold text-slate-500 uppercase mt-1">Tài liệu mồ côi</div>
+                </div>
+              </div>
+
+              {orphanData.totalOrphans === 0 ? (
+                <div className="p-8 text-center bg-emerald-50/50 border border-emerald-200 rounded-2xl">
+                  <CheckCircle2 className="w-12 h-12 text-emerald-600 mx-auto mb-2" />
+                  <h3 className="text-sm font-bold text-emerald-900 uppercase">Hệ thống toàn vẹn tuyệt đối!</h3>
+                  <p className="text-xs text-emerald-700 mt-1">Không phát hiện bản ghi mồ côi hay dữ liệu rác nào trong Firestore.</p>
+                </div>
+              ) : (
+                <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl space-y-3">
+                  <div className="text-xs font-bold text-rose-800 uppercase flex items-center space-x-2">
+                    <XCircle className="w-4 h-4 text-rose-600" />
+                    <span>Phát hiện {orphanData.totalOrphans} mục dữ liệu không có liên kết hợp lệ!</span>
+                  </div>
+                  <p className="text-xs text-rose-700">
+                    Bạn có thể sử dụng chức năng Cascade Delete từng bài học để làm sạch triệt để.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 

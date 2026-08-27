@@ -273,20 +273,16 @@ export function App() {
           ) : currentView === 'courses' ? (
             <CoursesView
               courses={courses}
-              deletedCourses={deletedCourses}
               lessons={lessons}
-              deletedLessons={deletedLessons}
               onSelectLesson={(l) => setSelectedLessonForEditing(l)}
               onPreviewLesson={(l) => setPreviewLesson(l)}
               onCreateCourse={handleCreateCourse}
               onUpdateCourse={handleUpdateCourse}
               onDeleteCourse={handleDeleteCourse}
-              onRestoreCourse={handleRestoreCourse}
               onCreateLesson={handleCreateLesson}
               onUpdateLesson={handleUpdateLesson}
               onDuplicateLesson={handleDuplicateLesson}
               onDeleteLesson={handleDeleteLesson}
-              onRestoreLesson={handleRestoreLesson}
             />
           ) : currentView === 'users' ? (
             <UsersView

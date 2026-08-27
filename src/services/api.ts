@@ -70,6 +70,10 @@ export const api = {
   },
 
   deleteCourse: async (id: string, permanent = false): Promise<{ success: boolean; message: string }> => {
+    if (permanent) {
+      const report = await firestoreService.deleteCourseCascade(id);
+      return { success: report.success, message: report.message };
+    }
     return await firestoreService.deleteCourse(id, permanent);
   },
 
@@ -114,6 +118,10 @@ export const api = {
   },
 
   deleteLesson: async (id: string, permanent = false): Promise<{ success: boolean; message: string }> => {
+    if (permanent) {
+      const report = await firestoreService.deleteLessonCascade(id);
+      return { success: report.success, message: report.message };
+    }
     return await firestoreService.deleteLesson(id, permanent);
   },
 
@@ -877,6 +885,7 @@ export const api = {
       name: displayName,
       fullName: displayName,
       email: data.email || 'quan.nhan@vung4.vn',
+      password: data.password || '123@abc',
       role: data.role || 'USER',
       rank: data.rank || 'Đại úy',
       position: data.position || 'Trợ lý',

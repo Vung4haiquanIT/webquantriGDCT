@@ -497,12 +497,13 @@ const defaultSeedData: DatabaseSchema = {
       updatedAt: '2026-01-01T00:00:00.000Z'
     }
   ],
-  users: [
+   users: [
     {
       id: 'user-1',
       name: 'Nguyễn Văn Hùng',
       fullName: 'Nguyễn Văn Hùng',
       email: 'admin.vung4@navy.mil.vn',
+      password: '123@abc',
       role: 'ADMIN',
       rank: 'Đại tá',
       position: 'Chủ nhiệm Chính trị Vùng 4',
@@ -519,6 +520,7 @@ const defaultSeedData: DatabaseSchema = {
       name: 'Trần Minh Đức',
       fullName: 'Trần Minh Đức',
       email: 'duc.tm@navy.mil.vn',
+      password: '123@abc',
       role: 'APPROVER',
       rank: 'Trung tá',
       position: 'Trưởng ban Tuyên huấn',
@@ -535,6 +537,7 @@ const defaultSeedData: DatabaseSchema = {
       name: 'Lê Hoàng Nam',
       fullName: 'Lê Hoàng Nam',
       email: 'nam.lh@navy.mil.vn',
+      password: '123@abc',
       role: 'APPROVER',
       rank: 'Thượng tá',
       position: 'Chủ nhiệm Chính trị Lữ đoàn 162',
@@ -551,6 +554,7 @@ const defaultSeedData: DatabaseSchema = {
       name: 'Hoàng Văn Kiên',
       fullName: 'Hoàng Văn Kiên',
       email: 'kien.hv@navy.mil.vn',
+      password: '123@abc',
       role: 'USER',
       rank: 'Đại úy',
       position: 'Chính trị viên Tàu 015 - Trần Hưng Đạo',
@@ -567,6 +571,7 @@ const defaultSeedData: DatabaseSchema = {
       name: 'Phạm Đức Trọng',
       fullName: 'Phạm Đức Trọng',
       email: 'trong.pd@navy.mil.vn',
+      password: '123@abc',
       role: 'USER',
       rank: 'Thượng úy',
       position: 'Trợ lý Chính trị Đảo Trường Sa Lớn',
@@ -2632,7 +2637,7 @@ app.get('/api/users', (req: Request, res: Response) => {
 });
 
 app.post('/api/users', (req: Request, res: Response) => {
-  const { name, fullName, email, role, rank, position, rankAndPosition, unitId, unit: unitNameInput, status } = req.body;
+  const { name, fullName, email, password, role, rank, position, rankAndPosition, unitId, unit: unitNameInput, status } = req.body;
   const displayName = fullName || name;
   if (!displayName || !email) return res.status(400).json({ error: 'Tên và email là bắt buộc' });
 
@@ -2645,6 +2650,7 @@ app.post('/api/users', (req: Request, res: Response) => {
     name: displayName,
     fullName: displayName,
     email,
+    password: password || '123@abc',
     role: (role as UserRole) || 'USER',
     rank: rank || 'Đại úy',
     position: position || 'Cán bộ',
@@ -2669,6 +2675,7 @@ app.put('/api/users/:id', (req: Request, res: Response) => {
   const updated: User = {
     ...db.users[idx],
     ...req.body,
+    password: req.body.password || db.users[idx].password || '123@abc',
     updatedAt: new Date().toISOString()
   };
 

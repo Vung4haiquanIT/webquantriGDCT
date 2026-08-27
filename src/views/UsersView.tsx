@@ -40,6 +40,7 @@ export const UsersView: React.FC<UsersViewProps> = ({
   const [formData, setFormData] = useState({
     fullName: '',
     email: '',
+    password: '123@abc',
     role: 'USER' as UserRole,
     rank: 'Đại úy',
     position: 'Chính trị viên',
@@ -88,6 +89,7 @@ export const UsersView: React.FC<UsersViewProps> = ({
     setFormData({
       fullName: '',
       email: '',
+      password: '123@abc',
       role: 'USER',
       rank: 'Đại úy',
       position: 'Chính trị viên',
@@ -110,6 +112,7 @@ export const UsersView: React.FC<UsersViewProps> = ({
     setFormData({
       fullName: u.fullName || u.name,
       email: u.email,
+      password: u.password || '123@abc',
       role: normRole,
       rank: r,
       position: p,
@@ -397,7 +400,13 @@ export const UsersView: React.FC<UsersViewProps> = ({
                           </div>
                           <div>
                             <div className="font-bold text-slate-900">{displayName}</div>
-                            <div className="text-[10px] text-slate-400 font-mono">{u.email}</div>
+                            <div className="text-[10px] text-slate-500 font-mono flex items-center space-x-1.5 mt-0.5">
+                              <span>📧 {u.email}</span>
+                              <span>•</span>
+                              <span className="text-blue-700 font-bold bg-blue-50 px-1.5 py-0.2 rounded border border-blue-200" title="Mật khẩu đăng nhập App">
+                                🔑 {u.password || '123@abc'}
+                              </span>
+                            </div>
                           </div>
                         </div>
                       </td>
@@ -517,6 +526,27 @@ export const UsersView: React.FC<UsersViewProps> = ({
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 font-mono text-[11px] focus:outline-hidden focus:border-blue-500 focus:bg-white"
                 />
+              </div>
+
+              {/* Mật khẩu đăng nhập App */}
+              <div>
+                <label className="block text-slate-700 font-bold mb-1">
+                  Mật khẩu đăng nhập App <span className="text-red-500">*</span>
+                </label>
+                <div className="relative">
+                  <input
+                    id="form-user-password"
+                    type="text"
+                    required
+                    placeholder="Mật khẩu (mặc định 123@abc)"
+                    value={formData.password}
+                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 font-mono text-xs focus:outline-hidden focus:border-blue-500 focus:bg-white"
+                  />
+                  <span className="absolute right-3 top-2.5 text-[10px] text-blue-700 font-bold bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                    Mặc định: 123@abc
+                  </span>
+                </div>
               </div>
 
               {/* Cấp bậc & Chức vụ */}

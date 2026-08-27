@@ -169,7 +169,14 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
   onLessonUpdated,
 }) => {
   const [currentLesson, setCurrentLesson] = useState<Lesson>(lesson);
-  const [activeModuleTab, setActiveModuleTab] = useState<'slides' | 'contents' | 'videos' | 'audios'>('slides');
+  const [activeModuleTab, setActiveModuleTab] = useState<'slides' | 'contents' | 'videos' | 'audios'>(() => {
+    return (sessionStorage.getItem('active_lesson_tab') as any) || 'contents';
+  });
+
+  const handleTabChange = (tab: 'slides' | 'contents' | 'videos' | 'audios') => {
+    setActiveModuleTab(tab);
+    sessionStorage.setItem('active_lesson_tab', tab);
+  };
   const [isSaving, setIsSaving] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -266,12 +273,26 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
   const [isDeletingAudio, setIsDeletingAudio] = useState(false);
   const [isReplacingAudio, setIsReplacingAudio] = useState(false);
   const [replacingAudioId, setReplacingAudioId] = useState<string | null>(null);
+  const [isPushingToApp, setIsPushingToApp] = useState(false);
 
-  const [offlinePackage, setOfflinePackage] = useState<any | null>(null);
-  const [loadingOfflinePackage, setLoadingOfflinePackage] = useState(false);
-  const [isManifestModalOpen, setIsManifestModalOpen] = useState(false);
-  const [isRebuildingPackage, setIsRebuildingPackage] = useState(false);
-  const [copiedChecksum, setCopiedChecksum] = useState(false);
+  const handlePushToAppAndFirebase = async () => {
+    try {
+      setIsPushingToApp(true);
+      const updated = await api.updateLesson(currentLesson.id, {
+        updatedAt: new Date().toISOString()
+      });
+      setCurrentLesson(updated);
+      onLessonUpdated(updated);
+      showToast('🚀 Đã đẩy nội dung lên ứng dụng và đồng bộ thành công trên Firebase!');
+    } catch (err: any) {
+      console.error('Error pushing to app:', err);
+      showToast('❌ Lỗi đồng bộ: ' + (err.message || 'Lỗi hệ thống'));
+    } finally {
+      setIsPushingToApp(false);
+    }
+  };
+
+
 
   const [showPreUploadModal, setShowPreUploadModal] = useState(false);
   const [selectedPptxFile, setSelectedPptxFile] = useState<File | null>(null);
@@ -348,17 +369,7 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
     };
   }, [currentLesson?.id]);
 
-  const loadOfflinePackage = async () => {
-    try {
-      setLoadingOfflinePackage(true);
-      const pkg = await api.getOfflinePackage(lesson.id);
-      setOfflinePackage(pkg);
-    } catch (e) {
-      console.warn('Could not load offline package:', e);
-    } finally {
-      setLoadingOfflinePackage(false);
-    }
-  };
+
 
   // Load all module data including structured sections & items
   const loadStructuredData = async () => {
@@ -405,7 +416,6 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
       setVideos(videosRes);
       setAudios(audiosRes);
       await loadStructuredData();
-      loadOfflinePackage();
     } catch (err) {
       console.error('Error loading module data:', err);
     } finally {
@@ -416,33 +426,7 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
     }
   };
 
-  const handleRebuildOfflinePackage = async () => {
-    try {
-      setIsRebuildingPackage(true);
-      const res = await api.rebuildOfflinePackage(currentLesson.id);
-      if (res.success && res.offlinePackage) {
-        setOfflinePackage(res.offlinePackage);
-        const updatedLesson = {
-          ...currentLesson,
-          version: res.offlinePackage.version
-        };
-        setCurrentLesson(updatedLesson);
-        onLessonUpdated(updatedLesson);
-        showToast(`Đã tái tạo gói Offline Package v${res.offlinePackage.version} thành công!`);
-      }
-    } catch (err) {
-      showToast('Lỗi khi tái tạo gói offline');
-    } finally {
-      setIsRebuildingPackage(false);
-    }
-  };
 
-  const copyChecksumToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedChecksum(true);
-    setTimeout(() => setCopiedChecksum(false), 2000);
-    showToast('Đã sao chép mã SHA-256 Checksum');
-  };
 
   // Document Parser & Proposal Handlers
   const handleDocFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -693,10 +677,6 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
   };
 
   const handleClearAllStructure = async () => {
-    if (!confirm('BẠN CÓ CHẮC CHẮN MUỐN XÓA TOÀN BỘ CẤU TRÚC BÀI HỌC VÀ CÁC CÂU HỎI LIÊN QUAN KHÔNG?\n\n- Toàn bộ các Phần, Mục, nội dung giảng dạy và câu hỏi kiểm tra sẽ bị xóa hoàn toàn.\n- Trả giao diện về trạng thái ban đầu (Chưa có Phần nào trong bài học).')) {
-      return;
-    }
-
     try {
       setIsParsingDoc(true);
       const res = await api.deleteAllLessonContent(currentLesson.id);
@@ -724,8 +704,6 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
     const sec = sections.find(s => s.id === secId);
     const secItems = items.filter(i => i.sectionId === secId);
     const secItemIds = new Set(secItems.map(i => i.id));
-    const secQuestions = questions.filter(q => q.sectionId === secId || (q.itemId && secItemIds.has(q.itemId)));
-    if (!confirm(`XÓA PHẦN "${sec?.title || 'Này'}"?\nThao tác này sẽ xóa ${secItems.length} mục nội dung và ${secQuestions.length} câu hỏi kiểm tra cuối phần cùng tiến độ học tập liên quan.`)) return;
 
     // Cập nhật State bất biến (Immutability) chuẩn React
     setSections(prevSections => {
@@ -750,7 +728,7 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
 
     try {
       await api.deleteSectionCascade(currentLesson.id, secId);
-      showToast('Đã xóa Phần và toàn bộ nội dung liên quan thành công!');
+      showToast('Đã xóa Phần và toàn bộ nội dung liên quan thành công trên hệ thống & Firebase!');
     } catch (err: any) {
       console.error('Error deleting section:', err);
       showToast('❌ Lỗi xóa Phần: ' + (err.message || 'Lỗi hệ thống'));
@@ -787,7 +765,6 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
       e.preventDefault();
     }
     const item = items.find(i => i.id === itemId);
-    if (!confirm(`Bạn có chắc chắn muốn xóa mục "${item?.title || 'này'}" không?`)) return;
 
     // Cập nhật State bất biến (Immutability) chuẩn React
     setItems(prevItems => prevItems.filter(i => i.id !== itemId));
@@ -804,7 +781,7 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
 
     try {
       await api.deleteItemCascade(itemId);
-      showToast('Đã xóa Mục thành công!');
+      showToast('Đã xóa Mục và dữ liệu liên quan thành công trên hệ thống & Firebase!');
     } catch (err: any) {
       console.error('Error deleting item:', err);
       showToast('❌ Lỗi xóa Mục: ' + (err.message || 'Lỗi hệ thống'));
@@ -879,7 +856,7 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
     try {
       await api.deleteQuestion(qId);
       setQuestions(questions.filter(q => q.id !== qId));
-      showToast('Đã xóa câu hỏi');
+      showToast('Đã xóa câu hỏi thành công trên hệ thống và Firebase!');
     } catch (err: any) {
       console.error('Error deleting question:', err);
       showToast('❌ Lỗi xóa câu hỏi: ' + (err.message || 'Lỗi hệ thống'));
@@ -1240,11 +1217,10 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
   };
 
   const handleDeleteSlide = async (id: string) => {
-    if (!confirm('Bạn có chắc chắn muốn xóa slide này?')) return;
     try {
       await api.deleteSlide(id);
       setSlides(slides.filter((s) => s.id !== id));
-      showToast('Đã xóa slide thành công');
+      showToast('Đã xóa slide thành công trên hệ thống & Firebase!');
     } catch {
       showToast('Lỗi xóa slide');
     }
@@ -1388,11 +1364,10 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
   };
 
   const handleDeleteContent = async (id: string) => {
-    if (!confirm('Bạn có chắc chắn muốn xóa mục nội dung này?')) return;
     try {
       await api.deleteContent(id);
       setContents(contents.filter((c) => c.id !== id));
-      showToast('Đã xóa mục nội dung');
+      showToast('Đã xóa mục nội dung thành công!');
     } catch {
       showToast('Lỗi xóa nội dung');
     }
@@ -1799,10 +1774,9 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
               onChange={(e) => handleChangeStatus(e.target.value as PublishStatus)}
               className="bg-white text-slate-800 text-xs font-semibold rounded-lg px-2 py-1 border border-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
             >
-              <option value="DRAFT">Bản nháp</option>
               <option value="REVIEW">Chờ thẩm định</option>
-              <option value="PUBLISHED">Đã phát hành</option>
-              <option value="ARCHIVED">Lưu trữ</option>
+              <option value="INTERNAL">Nội bộ</option>
+              <option value="PUBLISHED">Công khai</option>
             </select>
           </div>
 
@@ -1817,64 +1791,7 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
         </div>
       </div>
 
-      {/* OFFLINE PACKAGE STATUS & CONTROL PANEL (Android WorkManager & Room Cache) */}
-      <div className="bg-gradient-to-r from-blue-50/90 via-indigo-50/50 to-white p-4 rounded-2xl border border-blue-200/80 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-        <div className="flex items-start sm:items-center space-x-3 min-w-0">
-          <div className="p-2.5 rounded-xl bg-blue-600 text-white shadow-xs shrink-0">
-            <Package className="w-5 h-5" />
-          </div>
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                <Smartphone className="w-3.5 h-3.5 text-blue-600" />
-                Gói Học Offline (Android Room & WorkManager Package)
-              </span>
-              <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
-                <ShieldCheck className="w-3 h-3 text-emerald-600" />
-                SẴN SÀNG ĐỒNG BỘ
-              </span>
-            </div>
 
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600 mt-1">
-              <span className="flex items-center gap-1">
-                <HardDrive className="w-3.5 h-3.5 text-slate-400" />
-                Dung lượng ước tính: <strong className="text-slate-800 font-semibold">{offlinePackage?.totalSizeMb ?? 0} MB</strong>
-              </span>
-              <span className="flex items-center gap-1">
-                <FileCheck className="w-3.5 h-3.5 text-slate-400" />
-                Tệp cấu thành: <strong className="text-slate-800 font-semibold">{offlinePackage?.fileCount ?? (slides.length + videos.length + audios.length + 1)} tệp</strong>
-              </span>
-              <span className="flex items-center gap-1 font-mono text-[11px]">
-                <Hash className="w-3 h-3 text-slate-400" />
-                SHA-256: <code className="text-slate-700 bg-white px-1.5 py-0.5 rounded border border-slate-200">{offlinePackage?.packageChecksum ? `${offlinePackage.packageChecksum.substring(0, 10)}...` : 'calc...'}</code>
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
-          <button
-            id="btn-inspect-manifest"
-            onClick={() => setIsManifestModalOpen(true)}
-            className="flex items-center space-x-1.5 px-3 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded-xl text-xs font-semibold shadow-2xs transition-all"
-            title="Kiểm tra danh sách tệp đính kèm và mã checksum SHA-256"
-          >
-            <FileCheck className="w-3.5 h-3.5 text-blue-600" />
-            <span>Kiểm tra Manifest Tệp</span>
-          </button>
-
-          <button
-            id="btn-rebuild-offline-pkg"
-            onClick={handleRebuildOfflinePackage}
-            disabled={isRebuildingPackage}
-            className="flex items-center space-x-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition-all disabled:opacity-50"
-            title="Tính toán lại mã băm checksum và nâng version gói offline"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isRebuildingPackage ? 'animate-spin' : ''}`} />
-            <span>{isRebuildingPackage ? 'Đang tái tạo...' : 'Tái tạo Gói Offline'}</span>
-          </button>
-        </div>
-      </div>
 
       {/* Module Visibility Toggle Ribbon */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3">
@@ -1912,7 +1829,7 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
             }`}
           >
             <FileText className="w-3.5 h-3.5" />
-            <span>Nội dung bài học ({contents.length})</span>
+            <span>Nội dung bài học ({items.length > 0 ? items.length : contents.length})</span>
           </button>
 
           <button
@@ -1947,7 +1864,7 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
         <div className="flex border-b border-slate-200 bg-slate-50/70 overflow-x-auto">
           <button
             id="tab-btn-slides"
-            onClick={() => setActiveModuleTab('slides')}
+            onClick={() => handleTabChange('slides')}
             className={`flex items-center space-x-2 px-6 py-3.5 text-xs font-bold transition-all border-b-2 whitespace-nowrap ${
               activeModuleTab === 'slides'
                 ? 'border-blue-600 text-blue-600 bg-white shadow-xs'
@@ -1960,7 +1877,7 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
 
           <button
             id="tab-btn-contents"
-            onClick={() => setActiveModuleTab('contents')}
+            onClick={() => handleTabChange('contents')}
             className={`flex items-center space-x-2 px-6 py-3.5 text-xs font-bold transition-all border-b-2 whitespace-nowrap ${
               activeModuleTab === 'contents'
                 ? 'border-blue-600 text-blue-600 bg-white shadow-xs'
@@ -1968,12 +1885,12 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
             }`}
           >
             <FileText className="w-4 h-4 text-blue-600" />
-            <span>Nội dung bài học ({contents.length})</span>
+            <span>Nội dung bài học ({items.length > 0 ? items.length : contents.length})</span>
           </button>
 
           <button
             id="tab-btn-videos"
-            onClick={() => setActiveModuleTab('videos')}
+            onClick={() => handleTabChange('videos')}
             className={`flex items-center space-x-2 px-6 py-3.5 text-xs font-bold transition-all border-b-2 whitespace-nowrap ${
               activeModuleTab === 'videos'
                 ? 'border-blue-600 text-blue-600 bg-white shadow-xs'
@@ -1986,7 +1903,7 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
 
           <button
             id="tab-btn-audios"
-            onClick={() => setActiveModuleTab('audios')}
+            onClick={() => handleTabChange('audios')}
             className={`flex items-center space-x-2 px-6 py-3.5 text-xs font-bold transition-all border-b-2 whitespace-nowrap ${
               activeModuleTab === 'audios'
                 ? 'border-blue-600 text-blue-600 bg-white shadow-xs'
@@ -2006,43 +1923,7 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
           {activeModuleTab === 'slides' && (
             <div className="space-y-6">
 
-              {/* HƯỚNG DẪN 5 BƯỚC XUẤT SLIDE HÌNH ẢNH TỪ POWERPOINT */}
-              <div className="bg-slate-900 border border-amber-500/40 p-5 rounded-2xl shadow-xl space-y-3.5 text-xs text-amber-100">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2.5 font-bold text-amber-400 text-sm">
-                    <FileText className="w-5 h-5 shrink-0 text-amber-400" />
-                    <span>HƯỚNG DẪN XUẤT FOLDER SLIDE HÌNH ẢNH TỪ POWERPOINT (BẮT BUỘC)</span>
-                  </div>
-                  <span className="text-[10px] bg-amber-500/20 text-amber-300 font-mono px-2.5 py-1 rounded-full border border-amber-500/30">
-                    QUY TRÌNH MỚI CHUẨN ĐỊNH DẠNG
-                  </span>
-                </div>
-                <p className="text-slate-300 leading-relaxed text-[11px]">
-                  Web Admin không nhận file `.pptx` trực tiếp. Quản trị viên tự xuất PowerPoint thành <strong>Folder chứa toàn bộ ảnh Slide (PNG / JPEG)</strong> và tải Folder đó lên Web. Hệ thống sẽ tự động sắp xếp theo thứ tự số tự nhiên (Natural Sort).
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-5 gap-2.5 pt-1">
-                  <div className="bg-slate-800/90 p-3 rounded-xl border border-amber-500/20 space-y-1">
-                    <span className="font-bold text-amber-400 block text-xs">Bước 1</span>
-                    <span className="text-[11px] text-slate-300">Mở bài giảng trong phần mềm Microsoft PowerPoint.</span>
-                  </div>
-                  <div className="bg-slate-800/90 p-3 rounded-xl border border-amber-500/20 space-y-1">
-                    <span className="font-bold text-amber-400 block text-xs">Bước 2</span>
-                    <span className="text-[11px] text-slate-300">Chọn menu <strong>File → Export / Save As</strong> (Xuất / Lưu thành).</span>
-                  </div>
-                  <div className="bg-slate-800/90 p-3 rounded-xl border border-amber-500/20 space-y-1">
-                    <span className="font-bold text-amber-400 block text-xs">Bước 3</span>
-                    <span className="text-[11px] text-slate-300">Chọn định dạng <strong>PNG File Interchange Format</strong> hoặc <strong>JPEG</strong>.</span>
-                  </div>
-                  <div className="bg-slate-800/90 p-3 rounded-xl border border-amber-500/20 space-y-1">
-                    <span className="font-bold text-amber-400 block text-xs">Bước 4</span>
-                    <span className="text-[11px] text-slate-300">Nhấp chọn <strong>“Every Slide”</strong> (Tất cả các slide).</span>
-                  </div>
-                  <div className="bg-slate-800/90 p-3 rounded-xl border border-amber-500/20 space-y-1">
-                    <span className="font-bold text-amber-400 block text-xs">Bước 5</span>
-                    <span className="text-[11px] text-slate-300">PowerPoint tự động tạo Folder ảnh (`Slide1`, `Slide2`...). Bấm nút <strong>[ + CHỌN FOLDER BỘ SLIDE ]</strong> bên dưới để chọn Folder đó.</span>
-                  </div>
-                </div>
-              </div>
+
 
               {/* ACTION TOOLBAR & FOLDER SELECTION */}
               <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -3216,6 +3097,31 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
                   </div>
                 </div>
               )}
+
+              {/* Bottom Push To App & Firebase Sync Bar */}
+              <div className="mt-8 p-6 bg-gradient-to-r from-blue-900 via-indigo-950 to-slate-900 rounded-2xl border border-blue-500/30 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4 text-white">
+                <div className="flex items-center space-x-3">
+                  <div className="p-3 bg-blue-600/30 border border-blue-400/30 rounded-xl text-blue-300 shrink-0">
+                    <Upload className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold uppercase tracking-wider text-blue-100">Đồng bộ cấu trúc & nội dung bài học</h4>
+                    <p className="text-xs text-blue-200/80 mt-0.5">
+                      Sau khi chỉnh sửa cấu trúc (Phần, Mục) hoặc nội dung/câu hỏi, bấm nút bên cạnh để đẩy dữ liệu lên ứng dụng và đồng bộ tức thì trên Firebase.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  id="btn-push-to-app-firebase"
+                  disabled={isPushingToApp}
+                  onClick={handlePushToAppAndFirebase}
+                  className="px-6 py-3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-extrabold text-xs rounded-xl shadow-lg transition-all transform active:scale-95 disabled:opacity-50 flex items-center space-x-2 shrink-0 cursor-pointer"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isPushingToApp ? 'animate-spin' : ''}`} />
+                  <span>{isPushingToApp ? 'Đang đẩy lên ứng dụng...' : 'Đẩy lên ứng dụng & Firebase'}</span>
+                </button>
+              </div>
             </div>
           )}
 
@@ -4026,130 +3932,7 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
           </div>
         </div>
       )}
-      {/* Modal: Offline Manifest & Integrity Inspector */}
-      {isManifestModalOpen && offlinePackage && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
-            <div className="p-5 border-b border-slate-200 flex items-center justify-between bg-slate-50/70">
-              <div className="flex items-center space-x-3">
-                <div className="p-2 bg-blue-100 text-blue-700 rounded-xl">
-                  <Package className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-slate-800">
-                    Manifest Gói Học Offline Android — Bài học: {currentLesson.title}
-                  </h3>
-                  <p className="text-[11px] text-slate-500">
-                    Gói nạp tự động cho Android WorkManager / Room Database với mã kiểm tra toàn vẹn SHA-256
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setIsManifestModalOpen(false)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
-              >
-                ✕
-              </button>
-            </div>
 
-            <div className="p-5 space-y-4 overflow-y-auto flex-1 text-xs">
-              {/* Package Summary Card */}
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div>
-                  <span className="text-[10px] text-slate-500 block uppercase font-bold">Phiên bản gói</span>
-                  <span className="text-sm font-bold text-blue-700 font-mono">v{offlinePackage.packageVersion}</span>
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-500 block uppercase font-bold">Tổng dung lượng</span>
-                  <span className="text-sm font-bold text-slate-800">{offlinePackage.totalSizeMb} MB</span>
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-500 block uppercase font-bold">Số lượng tệp</span>
-                  <span className="text-sm font-bold text-slate-800">{offlinePackage.fileCount} tệp</span>
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-500 block uppercase font-bold">Trạng thái</span>
-                  <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                    {offlinePackage.packageStatus}
-                  </span>
-                </div>
-              </div>
-
-              {/* Master Checksum */}
-              <div className="bg-blue-50/50 border border-blue-200 rounded-xl p-3.5 flex items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <span className="text-[11px] font-bold text-blue-900 block">Mã băm SHA-256 Tổng (Bundle Checksum):</span>
-                  <code className="text-[11px] text-blue-700 font-mono break-all select-all block mt-0.5">
-                    {offlinePackage.packageChecksum}
-                  </code>
-                </div>
-                <button
-                  onClick={() => copyChecksumToClipboard(offlinePackage.packageChecksum)}
-                  className="px-3 py-1.5 bg-white hover:bg-blue-100 text-blue-700 border border-blue-300 rounded-lg text-xs font-semibold shrink-0 flex items-center gap-1 transition-all"
-                >
-                  {copiedChecksum ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copiedChecksum ? 'Đã chép' : 'Sao chép'}</span>
-                </button>
-              </div>
-
-              {/* Manifest File Table */}
-              <div>
-                <h4 className="font-bold text-slate-700 text-xs mb-2">Danh Sách Tệp Trong Gói (WorkManager File Queue):</h4>
-                <div className="border border-slate-200 rounded-xl overflow-hidden">
-                  <table className="w-full text-left border-collapse text-[11px]">
-                    <thead className="bg-slate-100 text-slate-600 uppercase font-semibold border-b border-slate-200">
-                      <tr>
-                        <th className="p-2.5">Tên tệp</th>
-                        <th className="p-2.5">Loại tệp</th>
-                        <th className="p-2.5">Dung lượng</th>
-                        <th className="p-2.5">SHA-256 Checksum</th>
-                        <th className="p-2.5 text-center">Bắt buộc</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200">
-                      {offlinePackage.manifestFiles.map((file, idx) => (
-                        <tr key={file.id || idx} className="hover:bg-slate-50">
-                          <td className="p-2.5 font-medium text-slate-800">
-                            <div className="font-semibold text-slate-700">{file.name}</div>
-                            <div className="text-[10px] text-slate-400 font-mono truncate max-w-xs">{file.storagePath}</div>
-                          </td>
-                          <td className="p-2.5">
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                              {file.type}
-                            </span>
-                          </td>
-                          <td className="p-2.5 text-slate-700 whitespace-nowrap">
-                            {file.sizeMb > 0 ? `${file.sizeMb} MB` : `${Math.round(file.sizeBytes / 1024)} KB`}
-                          </td>
-                          <td className="p-2.5 font-mono text-[10px] text-slate-500">
-                            <span title={file.checksum}>{file.checksum.substring(0, 16)}...</span>
-                          </td>
-                          <td className="p-2.5 text-center">
-                            {file.isMandatory ? (
-                              <span className="text-emerald-600 font-bold">Có</span>
-                            ) : (
-                              <span className="text-slate-400">Tùy chọn</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-
-            <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-end">
-              <button
-                onClick={() => setIsManifestModalOpen(false)}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs shadow-xs"
-              >
-                Đóng
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Modal: Delete Source Document Confirmation */}
       {showDeleteDocModal && sourceDoc && (

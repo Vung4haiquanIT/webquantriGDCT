@@ -27,18 +27,20 @@ export interface UserProfile {
   rankAndPosition: string; // Ví dụ: Thượng úy - TLTH
   unit: string;            // Ví dụ: Lữ đoàn 162
   email: string;
+  password?: string;       // Mật khẩu đăng nhập (mặc định 123@abc)
   role: UserRole;
   status: 'ACTIVE' | 'INACTIVE';
   createdAt: string;
 }
 
-export type PublishStatus = 'DRAFT' | 'REVIEW' | 'PUBLISHED' | 'ARCHIVED';
+export type PublishStatus = 'DRAFT' | 'REVIEW' | 'PUBLISHED' | 'ARCHIVED' | 'INTERNAL';
 
 export interface User {
   id: string;
   name: string;
   fullName?: string;
   email: string;
+  password?: string;       // Mật khẩu đăng nhập (mặc định 123@abc)
   role: UserRole;
   rank?: string; // Cấp bậc (Đại úy, Trung tá, Thượng tá...)
   position?: string; // Chức vụ (Chính trị viên, Trợ lý Tuyên huấn...)

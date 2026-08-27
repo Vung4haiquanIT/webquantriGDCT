@@ -53,7 +53,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: 'courses' as NavTab,
       label: 'GIÁO DỤC CHÍNH TRỊ',
       icon: BookOpen,
-      badge: trashCount > 0 ? `+${trashCount} rác` : (stats ? `${stats.totalCourses}` : undefined),
+      badge: null,
     },
     {
       id: 'users' as NavTab,

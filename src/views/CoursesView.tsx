@@ -20,47 +20,41 @@ import {
   Headphones,
   Sliders,
   MoreVertical,
-  ArrowUpDown
+  ArrowUpDown,
+  Upload,
+  Image as ImageIcon
 } from 'lucide-react';
 import { Course, Lesson, PublishStatus } from '../types';
 import { DongSonDrum } from '../components/DongSonMotif';
+import { api } from '../services/api';
 
 interface CoursesViewProps {
   courses: Course[];
-  deletedCourses: Course[];
   lessons: Lesson[];
-  deletedLessons: Lesson[];
   onSelectLesson: (lesson: Lesson) => void;
   onPreviewLesson: (lesson: Lesson) => void;
   onCreateCourse: (course: Partial<Course>) => Promise<void>;
   onUpdateCourse: (id: string, course: Partial<Course>) => Promise<void>;
   onDeleteCourse: (id: string, permanent?: boolean) => Promise<void>;
-  onRestoreCourse: (id: string) => Promise<void>;
   onCreateLesson: (lesson: Partial<Lesson>) => Promise<void>;
   onUpdateLesson: (id: string, lesson: Partial<Lesson>) => Promise<void>;
   onDuplicateLesson: (id: string) => Promise<void>;
   onDeleteLesson: (id: string, permanent?: boolean) => Promise<void>;
-  onRestoreLesson: (id: string) => Promise<void>;
 }
 
 export const CoursesView: React.FC<CoursesViewProps> = ({
   courses,
-  deletedCourses,
   lessons,
-  deletedLessons,
   onSelectLesson,
   onPreviewLesson,
   onCreateCourse,
   onUpdateCourse,
   onDeleteCourse,
-  onRestoreCourse,
   onCreateLesson,
   onUpdateLesson,
   onDuplicateLesson,
   onDeleteLesson,
-  onRestoreLesson,
 }) => {
-  const [activeTab, setActiveTab] = useState<'active' | 'trash'>('active');
   const [expandedCourseIds, setExpandedCourseIds] = useState<Record<string, boolean>>({
     [courses[0]?.id || 'course-1']: true,
   });
@@ -71,12 +65,12 @@ export const CoursesView: React.FC<CoursesViewProps> = ({
   // Modal state for Course
   const [isCourseModalOpen, setIsCourseModalOpen] = useState(false);
   const [editingCourse, setEditingCourse] = useState<Course | null>(null);
+  const [isUploadingThumbnail, setIsUploadingThumbnail] = useState(false);
   const [courseFormData, setCourseFormData] = useState({
     title: '',
-    description: '',
     year: 2026,
     thumbnail: 'https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?auto=format&fit=crop&w=800&q=80',
-    status: 'DRAFT' as PublishStatus,
+    status: 'REVIEW' as PublishStatus,
     createdBy: 'Phòng Chính trị Vùng 4',
   });
 
@@ -87,10 +81,8 @@ export const CoursesView: React.FC<CoursesViewProps> = ({
   const [lessonFormData, setLessonFormData] = useState({
     courseId: '',
     title: '',
-    description: '',
     thumbnail: 'https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?auto=format&fit=crop&w=600&q=80',
-    durationMinutes: 45,
-    status: 'DRAFT' as PublishStatus,
+    status: 'REVIEW' as PublishStatus,
     showSlides: true,
     showContents: true,
     showVideos: true,
@@ -102,14 +94,29 @@ export const CoursesView: React.FC<CoursesViewProps> = ({
     setExpandedCourseIds((prev) => ({ ...prev, [courseId]: !prev[courseId] }));
   };
 
+  const handleThumbnailFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploadingThumbnail(true);
+    try {
+      const res = await api.uploadSlideImage(file, editingCourse?.id || 'new-course', 'general');
+      if (res && res.secureUrl) {
+        setCourseFormData(prev => ({ ...prev, thumbnail: res.secureUrl }));
+      }
+    } catch (err: any) {
+      alert(`Lỗi tải ảnh lên: ${err.message}`);
+    } finally {
+      setIsUploadingThumbnail(false);
+    }
+  };
+
   const handleOpenNewCourse = () => {
     setEditingCourse(null);
     setCourseFormData({
       title: '',
-      description: '',
       year: 2026,
       thumbnail: 'https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?auto=format&fit=crop&w=800&q=80',
-      status: 'DRAFT',
+      status: 'REVIEW',
       createdBy: 'Phòng Chính trị Vùng 4',
     });
     setIsCourseModalOpen(true);
@@ -119,10 +126,9 @@ export const CoursesView: React.FC<CoursesViewProps> = ({
     setEditingCourse(course);
     setCourseFormData({
       title: course.title,
-      description: course.description,
       year: course.year,
       thumbnail: course.thumbnail,
-      status: course.status,
+      status: course.status || 'REVIEW',
       createdBy: course.createdBy,
     });
     setIsCourseModalOpen(true);
@@ -139,16 +145,52 @@ export const CoursesView: React.FC<CoursesViewProps> = ({
     setIsCourseModalOpen(false);
   };
 
+  const [courseToDelete, setCourseToDelete] = useState<Course | null>(null);
+  const [lessonToDelete, setLessonToDelete] = useState<Lesson | null>(null);
+  const [isDeletingItem, setIsDeletingItem] = useState(false);
+
+  const handleConfirmDeleteCourse = (course: Course) => {
+    setCourseToDelete(course);
+  };
+
+  const handleExecuteDeleteCourse = async () => {
+    if (!courseToDelete) return;
+    setIsDeletingItem(true);
+    try {
+      await onDeleteCourse(courseToDelete.id, true);
+      setCourseToDelete(null);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsDeletingItem(false);
+    }
+  };
+
+  const handleConfirmDeleteLesson = (lesson: Lesson) => {
+    setLessonToDelete(lesson);
+  };
+
+  const handleExecuteDeleteLesson = async () => {
+    if (!lessonToDelete) return;
+    setIsDeletingItem(true);
+    try {
+      await onDeleteLesson(lessonToDelete.id, true);
+      setLessonToDelete(null);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsDeletingItem(false);
+    }
+  };
+
   const handleOpenNewLesson = (courseId: string) => {
     setEditingLesson(null);
     setSelectedCourseForNewLesson(courseId);
     setLessonFormData({
       courseId,
       title: '',
-      description: '',
       thumbnail: 'https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?auto=format&fit=crop&w=600&q=80',
-      durationMinutes: 45,
-      status: 'DRAFT',
+      status: 'REVIEW',
       showSlides: true,
       showContents: true,
       showVideos: true,
@@ -164,9 +206,7 @@ export const CoursesView: React.FC<CoursesViewProps> = ({
     const payload = {
       courseId: lessonFormData.courseId,
       title: lessonFormData.title,
-      description: lessonFormData.description,
       thumbnail: lessonFormData.thumbnail,
-      durationMinutes: lessonFormData.durationMinutes,
       status: lessonFormData.status,
       moduleConfig: {
         showSlides: lessonFormData.showSlides,
@@ -211,31 +251,6 @@ export const CoursesView: React.FC<CoursesViewProps> = ({
         </div>
 
         <div className="flex items-center space-x-3">
-          {/* Tab Switch: Active vs Trash */}
-          <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
-            <button
-              onClick={() => setActiveTab('active')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                activeTab === 'active'
-                  ? 'bg-white text-slate-900 shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Đang hoạt động ({courses.length})
-            </button>
-            <button
-              onClick={() => setActiveTab('trash')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center space-x-1.5 ${
-                activeTab === 'trash'
-                  ? 'bg-rose-600 text-white shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>Thùng rác ({deletedCourses.length + deletedLessons.length})</span>
-            </button>
-          </div>
-
           <button
             id="create-new-course-header-btn"
             onClick={handleOpenNewCourse}
@@ -247,57 +262,53 @@ export const CoursesView: React.FC<CoursesViewProps> = ({
         </div>
       </div>
 
-      {/* Filter Toolbar (Only for Active Tab) */}
-      {activeTab === 'active' && (
-        <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
-          <div className="flex items-center space-x-3 flex-1 min-w-[280px]">
-            <div className="relative w-full max-w-md">
-              <input
-                type="text"
-                placeholder="Tìm kiếm chuyên đề, bài học..."
-                value={searchFilter}
-                onChange={(e) => setSearchFilter(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 text-slate-900 placeholder-slate-400 text-xs rounded-xl pl-9 pr-3 py-2 focus:outline-none focus:border-blue-500 focus:bg-white"
-              />
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-            </div>
-          </div>
-
-          <div className="flex items-center space-x-3 text-xs">
-            <div className="flex items-center space-x-1.5">
-              <span className="text-slate-600 font-medium">Năm:</span>
-              <select
-                value={yearFilter}
-                onChange={(e) => setYearFilter(e.target.value === 'ALL' ? 'ALL' : Number(e.target.value))}
-                className="bg-slate-50 border border-slate-200 text-slate-800 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:border-blue-500"
-              >
-                <option value="ALL">Tất cả các năm</option>
-                <option value={2026}>Năm 2026</option>
-                <option value={2025}>Năm 2025</option>
-              </select>
-            </div>
-
-            <div className="flex items-center space-x-1.5">
-              <span className="text-slate-600 font-medium">Trạng thái:</span>
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value as any)}
-                className="bg-slate-50 border border-slate-200 text-slate-800 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:border-blue-500"
-              >
-                <option value="ALL">Tất cả trạng thái</option>
-                <option value="PUBLISHED">Đã phát hành</option>
-                <option value="DRAFT">Bản nháp</option>
-                <option value="REVIEW">Chờ duyệt</option>
-                <option value="ARCHIVED">Lưu trữ</option>
-              </select>
-            </div>
+      {/* Filter Toolbar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
+        <div className="flex items-center space-x-3 flex-1 min-w-[280px]">
+          <div className="relative w-full max-w-md">
+            <input
+              type="text"
+              placeholder="Tìm kiếm chuyên đề, bài học..."
+              value={searchFilter}
+              onChange={(e) => setSearchFilter(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 text-slate-900 placeholder-slate-400 text-xs rounded-xl pl-9 pr-3 py-2 focus:outline-none focus:border-blue-500 focus:bg-white"
+            />
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
           </div>
         </div>
-      )}
 
-      {/* ACTIVE TAB: Hierarchical Courses & Lessons List */}
-      {activeTab === 'active' && (
-        <div className="space-y-4">
+        <div className="flex items-center space-x-3 text-xs">
+          <div className="flex items-center space-x-1.5">
+            <span className="text-slate-600 font-medium">Năm:</span>
+            <select
+              value={yearFilter}
+              onChange={(e) => setYearFilter(e.target.value === 'ALL' ? 'ALL' : Number(e.target.value))}
+              className="bg-slate-50 border border-slate-200 text-slate-800 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:border-blue-500"
+            >
+              <option value="ALL">Tất cả các năm</option>
+              <option value={2026}>Năm 2026</option>
+              <option value={2025}>Năm 2025</option>
+            </select>
+          </div>
+
+          <div className="flex items-center space-x-1.5">
+            <span className="text-slate-600 font-medium">Trạng thái:</span>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as any)}
+              className="bg-slate-50 border border-slate-200 text-slate-800 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:border-blue-500"
+            >
+              <option value="ALL">Tất cả trạng thái</option>
+              <option value="PUBLISHED">Công khai</option>
+              <option value="INTERNAL">Nội bộ</option>
+              <option value="REVIEW">Chờ thẩm định</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* Courses & Lessons List */}
+      <div className="space-y-4">
           {filteredCourses.length === 0 ? (
             <div className="bg-white p-12 text-center rounded-3xl border border-slate-200 text-slate-500 shadow-sm">
               <BookOpen className="w-12 h-12 mx-auto text-slate-400 mb-3" />
@@ -340,16 +351,16 @@ export const CoursesView: React.FC<CoursesViewProps> = ({
                             className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                               course.status === 'PUBLISHED'
                                 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                : course.status === 'DRAFT'
-                                ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                : course.status === 'INTERNAL'
+                                ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
                                 : 'bg-blue-50 text-blue-700 border border-blue-200'
                             }`}
                           >
                             {course.status === 'PUBLISHED'
-                              ? 'Đã phát hành'
-                              : course.status === 'DRAFT'
-                              ? 'Bản nháp'
-                              : 'Chờ duyệt'}
+                              ? 'Công khai'
+                              : course.status === 'INTERNAL'
+                              ? 'Nội bộ'
+                              : 'Chờ thẩm định'}
                           </span>
                         </div>
 
@@ -381,8 +392,8 @@ export const CoursesView: React.FC<CoursesViewProps> = ({
                       </button>
 
                       <button
-                        onClick={() => onDeleteCourse(course.id, false)}
-                        title="Chuyển vào thùng rác"
+                        onClick={() => handleConfirmDeleteCourse(course)}
+                        title="Xóa vĩnh viễn chuyên đề"
                         className="p-2 rounded-xl bg-white hover:bg-rose-50 text-rose-600 border border-slate-200 transition-colors shadow-sm"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -434,20 +445,20 @@ export const CoursesView: React.FC<CoursesViewProps> = ({
                                     <span className="text-[10px] font-mono text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
                                       v{lesson.version}
                                     </span>
-                                    <span
+                                     <span
                                       className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                                         lesson.status === 'PUBLISHED'
                                           ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                          : lesson.status === 'DRAFT'
-                                          ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                          : lesson.status === 'INTERNAL'
+                                          ? 'bg-purple-50 text-purple-700 border border-purple-200'
                                           : 'bg-blue-50 text-blue-700 border border-blue-200'
                                       }`}
                                     >
                                       {lesson.status === 'PUBLISHED'
-                                        ? 'Đã phát hành'
-                                        : lesson.status === 'DRAFT'
-                                        ? 'Bản nháp'
-                                        : 'Chờ duyệt'}
+                                        ? 'Công khai'
+                                        : lesson.status === 'INTERNAL'
+                                        ? 'Nội bộ'
+                                        : 'Chờ thẩm định'}
                                     </span>
                                   </div>
 
@@ -507,8 +518,8 @@ export const CoursesView: React.FC<CoursesViewProps> = ({
                                 </button>
 
                                 <button
-                                  onClick={() => onDeleteLesson(lesson.id, false)}
-                                  title="Chuyển bài học vào thùng rác"
+                                  onClick={() => handleConfirmDeleteLesson(lesson)}
+                                  title="Xóa vĩnh viễn bài học"
                                   className="p-2 rounded-xl bg-slate-100 hover:bg-rose-50 text-rose-600 border border-slate-200 transition-colors"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
@@ -525,88 +536,6 @@ export const CoursesView: React.FC<CoursesViewProps> = ({
             })
           )}
         </div>
-      )}
-
-      {/* TRASH TAB: Recycle Bin */}
-      {activeTab === 'trash' && (
-        <div className="space-y-6">
-          <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm">
-            <h3 className="text-sm font-bold text-rose-700 uppercase tracking-wider mb-3">
-              Chuyên đề đã xóa tạm ({deletedCourses.length})
-            </h3>
-            {deletedCourses.length === 0 ? (
-              <p className="text-xs text-slate-500 italic">Không có chuyên đề nào trong thùng rác.</p>
-            ) : (
-              <div className="space-y-2">
-                {deletedCourses.map((c) => (
-                  <div
-                    key={c.id}
-                    className="p-3 bg-slate-50 rounded-xl flex items-center justify-between border border-slate-200"
-                  >
-                    <div>
-                      <h4 className="text-xs font-bold text-slate-900">{c.title}</h4>
-                      <span className="text-[10px] text-slate-500 font-mono">Năm: {c.year}</span>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <button
-                        onClick={() => onRestoreCourse(c.id)}
-                        className="px-3 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold rounded-lg flex items-center space-x-1"
-                      >
-                        <RotateCcw className="w-3 h-3" />
-                        <span>Khôi phục</span>
-                      </button>
-                      <button
-                        onClick={() => onDeleteCourse(c.id, true)}
-                        className="px-3 py-1 bg-rose-50 text-rose-700 border border-rose-200 text-xs font-bold rounded-lg"
-                      >
-                        Xóa vĩnh viễn
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm">
-            <h3 className="text-sm font-bold text-rose-700 uppercase tracking-wider mb-3">
-              Bài học đã xóa tạm ({deletedLessons.length})
-            </h3>
-            {deletedLessons.length === 0 ? (
-              <p className="text-xs text-slate-500 italic">Không có bài học nào trong thùng rác.</p>
-            ) : (
-              <div className="space-y-2">
-                {deletedLessons.map((l) => (
-                  <div
-                    key={l.id}
-                    className="p-3 bg-slate-50 rounded-xl flex items-center justify-between border border-slate-200"
-                  >
-                    <div>
-                      <h4 className="text-xs font-bold text-slate-900">{l.title}</h4>
-                      <span className="text-[10px] text-slate-500 font-mono">Chuyên đề: {l.courseTitle}</span>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <button
-                        onClick={() => onRestoreLesson(l.id)}
-                        className="px-3 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold rounded-lg flex items-center space-x-1"
-                      >
-                        <RotateCcw className="w-3 h-3" />
-                        <span>Khôi phục</span>
-                      </button>
-                      <button
-                        onClick={() => onDeleteLesson(l.id, true)}
-                        className="px-3 py-1 bg-rose-50 text-rose-700 border border-rose-200 text-xs font-bold rounded-lg"
-                      >
-                        Xóa vĩnh viễn
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* Modal: Create / Edit Course */}
       {isCourseModalOpen && (
@@ -637,17 +566,6 @@ export const CoursesView: React.FC<CoursesViewProps> = ({
                 />
               </div>
 
-              <div>
-                <label className="block text-slate-700 font-bold mb-1">Mô tả tóm tắt</label>
-                <textarea
-                  rows={3}
-                  placeholder="Mô tả mục tiêu, đối tượng học tập của chuyên đề..."
-                  value={courseFormData.description}
-                  onChange={(e) => setCourseFormData({ ...courseFormData, description: e.target.value })}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-900 focus:outline-none focus:border-blue-500 focus:bg-white"
-                />
-              </div>
-
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-slate-700 font-bold mb-1">Năm học tập</label>
@@ -659,28 +577,51 @@ export const CoursesView: React.FC<CoursesViewProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-700 font-bold mb-1">Trạng thái phát hành</label>
+                  <label className="block text-slate-700 font-bold mb-1">Trạng thái</label>
                   <select
                     value={courseFormData.status}
                     onChange={(e) => setCourseFormData({ ...courseFormData, status: e.target.value as PublishStatus })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-900 focus:outline-none focus:border-blue-500 focus:bg-white"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-900 focus:outline-none focus:border-blue-500 focus:bg-white font-bold"
                   >
-                    <option value="DRAFT">Bản nháp</option>
                     <option value="REVIEW">Chờ thẩm định</option>
-                    <option value="PUBLISHED">Phát hành công khai</option>
-                    <option value="ARCHIVED">Lưu trữ</option>
+                    <option value="INTERNAL">Nội bộ</option>
+                    <option value="PUBLISHED">Công khai</option>
                   </select>
                 </div>
               </div>
 
               <div>
-                <label className="block text-slate-700 font-bold mb-1">Ảnh bìa (Thumbnail URL)</label>
-                <input
-                  type="text"
-                  value={courseFormData.thumbnail}
-                  onChange={(e) => setCourseFormData({ ...courseFormData, thumbnail: e.target.value })}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-900 focus:outline-none focus:border-blue-500 focus:bg-white font-mono text-[11px]"
-                />
+                <label className="block text-slate-700 font-bold mb-1">Ảnh bìa chuyên đề</label>
+                <div className="flex items-center space-x-3">
+                  <div className="w-16 h-12 rounded-lg bg-slate-100 border border-slate-200 overflow-hidden shrink-0">
+                    <img 
+                      src={courseFormData.thumbnail || 'https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?auto=format&fit=crop&w=800&q=80'} 
+                      alt="Thumbnail preview" 
+                      className="w-full h-full object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                  </div>
+                  <div className="flex-1 space-y-1">
+                    <label className="inline-flex items-center space-x-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-3 py-1.5 rounded-lg cursor-pointer text-xs transition-all border border-slate-200">
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>{isUploadingThumbnail ? 'Đang tải lên...' : 'Chọn ảnh từ máy'}</span>
+                      <input 
+                        type="file" 
+                        accept="image/*" 
+                        onChange={handleThumbnailFileChange} 
+                        disabled={isUploadingThumbnail}
+                        className="hidden" 
+                      />
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Hoặc nhập URL ảnh bìa..."
+                      value={courseFormData.thumbnail}
+                      onChange={(e) => setCourseFormData({ ...courseFormData, thumbnail: e.target.value })}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-1.5 text-slate-900 focus:outline-none focus:border-blue-500 focus:bg-white font-mono text-[10px]"
+                    />
+                  </div>
+                </div>
               </div>
 
               <div className="pt-3 border-t border-slate-100 flex items-center justify-end space-x-2">
@@ -748,39 +689,16 @@ export const CoursesView: React.FC<CoursesViewProps> = ({
               </div>
 
               <div>
-                <label className="block text-slate-700 font-bold mb-1">Mô tả bài học</label>
-                <textarea
-                  rows={2}
-                  placeholder="Tóm tắt yêu cầu nắm bắt của bài giảng..."
-                  value={lessonFormData.description}
-                  onChange={(e) => setLessonFormData({ ...lessonFormData, description: e.target.value })}
+                <label className="block text-slate-700 font-bold mb-1">Trạng thái phát hành</label>
+                <select
+                  value={lessonFormData.status}
+                  onChange={(e) => setLessonFormData({ ...lessonFormData, status: e.target.value as PublishStatus })}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-900 focus:outline-none focus:border-blue-500 focus:bg-white"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-700 font-bold mb-1">Thời lượng (phút)</label>
-                  <input
-                    type="number"
-                    value={lessonFormData.durationMinutes}
-                    onChange={(e) => setLessonFormData({ ...lessonFormData, durationMinutes: Number(e.target.value) })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-900 focus:outline-none focus:border-blue-500 focus:bg-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-700 font-bold mb-1">Trạng thái phát hành</label>
-                  <select
-                    value={lessonFormData.status}
-                    onChange={(e) => setLessonFormData({ ...lessonFormData, status: e.target.value as PublishStatus })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-900 focus:outline-none focus:border-blue-500 focus:bg-white"
-                  >
-                    <option value="DRAFT">Bản nháp</option>
-                    <option value="REVIEW">Chờ thẩm định</option>
-                    <option value="PUBLISHED">Phát hành công khai</option>
-                    <option value="ARCHIVED">Lưu trữ</option>
-                  </select>
-                </div>
+                >
+                  <option value="REVIEW">Chờ thẩm định</option>
+                  <option value="INTERNAL">Nội bộ</option>
+                  <option value="PUBLISHED">Công khai</option>
+                </select>
               </div>
 
               {/* Module Visibility Switches */}
@@ -847,6 +765,84 @@ export const CoursesView: React.FC<CoursesViewProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Confirm Delete Course */}
+      {courseToDelete && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-3xl w-full max-w-md overflow-hidden shadow-2xl animate-in zoom-in-95 p-6 space-y-4">
+            <div className="flex items-center space-x-3 text-rose-600">
+              <div className="p-3 bg-rose-50 rounded-2xl">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <h3 className="text-base font-bold text-slate-900">Xác nhận xóa Chuyên đề</h3>
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Đồng chí có chắc chắn muốn xóa chuyên đề <strong className="text-slate-900">"{courseToDelete.title}"</strong> không?
+            </p>
+            <div className="bg-rose-50/60 border border-rose-200 p-3 rounded-xl text-[11px] text-rose-800 space-y-1">
+              <p>• Xóa vĩnh viễn chuyên đề trên Firebase Firestore.</p>
+              <p>• Xóa toàn bộ bài học, nội dung, slide, video, audio liên quan.</p>
+            </div>
+            <div className="flex items-center justify-end space-x-2 pt-2">
+              <button
+                type="button"
+                disabled={isDeletingItem}
+                onClick={() => setCourseToDelete(null)}
+                className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingItem}
+                onClick={handleExecuteDeleteCourse}
+                className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-md disabled:opacity-50 flex items-center gap-2"
+              >
+                {isDeletingItem ? 'Đang xóa...' : 'Xóa vĩnh viễn'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Confirm Delete Lesson */}
+      {lessonToDelete && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-3xl w-full max-w-md overflow-hidden shadow-2xl animate-in zoom-in-95 p-6 space-y-4">
+            <div className="flex items-center space-x-3 text-rose-600">
+              <div className="p-3 bg-rose-50 rounded-2xl">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <h3 className="text-base font-bold text-slate-900">Xác nhận xóa Bài học</h3>
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Đồng chí có chắc chắn muốn xóa bài học <strong className="text-slate-900">"{lessonToDelete.title}"</strong> không?
+            </p>
+            <div className="bg-rose-50/60 border border-rose-200 p-3 rounded-xl text-[11px] text-rose-800 space-y-1">
+              <p>• Xóa vĩnh viễn bài học trên Firebase Firestore.</p>
+              <p>• Xóa toàn bộ slide, video, audio và tài liệu đính kèm trên Cloudinary & Firebase.</p>
+            </div>
+            <div className="flex items-center justify-end space-x-2 pt-2">
+              <button
+                type="button"
+                disabled={isDeletingItem}
+                onClick={() => setLessonToDelete(null)}
+                className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingItem}
+                onClick={handleExecuteDeleteLesson}
+                className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-md disabled:opacity-50 flex items-center gap-2"
+              >
+                {isDeletingItem ? 'Đang xóa...' : 'Xóa vĩnh viễn'}
+              </button>
+            </div>
           </div>
         </div>
       )}
