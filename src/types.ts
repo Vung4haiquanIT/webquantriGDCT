@@ -71,6 +71,7 @@ export interface Unit {
 
 export interface Course {
   id: string;
+  code?: string; // Mã khóa chuyên đề
   title: string;
   description: string;
   thumbnail: string;
@@ -98,6 +99,7 @@ export interface LessonModuleConfig {
 
 export interface Lesson {
   id: string;
+  lessonCode?: string; // Mã khóa bài học
   courseId: string;
   courseTitle?: string;
   title: string;
@@ -173,6 +175,7 @@ export interface SlideItem {
 
 export interface SourceDocument {
   id: string;
+  documentCode?: string; // Mã khóa tài liệu đính kèm
   lessonId: string;
   name: string;
   fileName?: string;

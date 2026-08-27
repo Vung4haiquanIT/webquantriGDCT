@@ -104,10 +104,12 @@ export const firestoreService = {
 
   createCourse: async (data: Partial<Course>): Promise<Course> => {
     const id = data.id || `course-${Date.now()}`;
+    const code = data.code || `CD-${Date.now().toString().slice(-6)}`;
     const docRef = doc(db, 'courses', id);
     const now = new Date().toISOString();
     const course: Course = {
       id,
+      code,
       title: data.title || 'Chuyên đề mới',
       description: data.description || '',
       thumbnail: data.thumbnail || 'https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?auto=format&fit=crop&w=800&q=80',
@@ -220,10 +222,12 @@ export const firestoreService = {
 
   createLesson: async (data: Partial<Lesson>): Promise<Lesson> => {
     const id = data.id || `lesson-${Date.now()}`;
+    const lessonCode = data.lessonCode || `BH-${Date.now().toString().slice(-6)}`;
     const docRef = doc(db, 'lessons', id);
     const now = new Date().toISOString();
     const lesson: Lesson = {
       id,
+      lessonCode,
       courseId: data.courseId || '',
       title: data.title || 'Bài học mới',
       subtitle: data.subtitle || '',
@@ -709,6 +713,7 @@ export const firestoreService = {
   // SOURCE DOCUMENT METADATA
   saveSourceDocument: async (lessonId: string, docData: Partial<SourceDocument>): Promise<SourceDocument> => {
     const docId = docData.id || `doc-${lessonId}-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const documentCode = docData.documentCode || `TL-${Date.now().toString().slice(-6)}`;
     const docRef = doc(db, 'documents', docId);
     const now = new Date().toISOString();
     const assetFolder = docData.assetFolder || docData.cloudinaryFolder || `GDCT_V4/TAILIEU/${lessonId}`;
@@ -716,6 +721,7 @@ export const firestoreService = {
     
     const documentObj: Record<string, any> = {
       id: docId,
+      documentCode,
       lessonId,
       name: docData.name || docData.fileName || 'Tài liệu GDCT',
       fileName: docData.fileName || docData.name || 'Tài liệu GDCT',

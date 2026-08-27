@@ -1726,6 +1726,11 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
               <span className="text-[10px] font-bold text-blue-700 uppercase bg-blue-50 px-2.5 py-0.5 rounded-full border border-blue-200">
                 {currentLesson.courseTitle || 'Chuyên đề GDCT'}
               </span>
+              {currentLesson.lessonCode && (
+                <span className="text-[10px] font-mono font-bold bg-indigo-50 text-indigo-800 px-2.5 py-0.5 rounded-full border border-indigo-200">
+                  Mã bài: {currentLesson.lessonCode}
+                </span>
+              )}
               <span className="text-[10px] font-mono font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
                 v{currentLesson.version}
               </span>
@@ -2493,6 +2498,11 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
                               <span className="text-[10px] uppercase font-mono px-2 py-0.5 bg-blue-900 text-blue-300 rounded font-bold">
                                 {(docObj.type || 'DOCX').toUpperCase()}
                               </span>
+                              {docObj.documentCode && (
+                                <span className="text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded border border-amber-500/30">
+                                  Mã tài liệu: {docObj.documentCode}
+                                </span>
+                              )}
                               <span className="text-xs font-mono text-slate-400">
                                 ({docObj.size ? (docObj.size > 1024 * 1024 ? `${(docObj.size / (1024 * 1024)).toFixed(2)} MB` : `${Math.round(docObj.size / 1024)} KB`) : '---'})
                               </span>

@@ -344,6 +344,11 @@ export const CoursesView: React.FC<CoursesViewProps> = ({
                           <span className="text-[10px] font-extrabold uppercase bg-amber-500 text-slate-950 px-2 py-0.5 rounded shadow-sm">
                             CHUYÊN ĐỀ {course.year}
                           </span>
+                          {course.code && (
+                            <span className="text-[10px] font-mono font-bold bg-amber-100 text-amber-900 px-2 py-0.5 rounded border border-amber-300">
+                              Mã khóa: {course.code}
+                            </span>
+                          )}
                           <span className="text-[10px] font-mono text-slate-600 bg-slate-200/70 px-1.5 py-0.5 rounded border border-slate-300">
                             v{course.version}
                           </span>
