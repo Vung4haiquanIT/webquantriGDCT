@@ -968,7 +968,14 @@ export const firestoreService = {
 
       // Update document status back to parsed/uploaded and clear publishedAt
       const docRef = doc(db, 'documents', documentId);
-      batch.update(docRef, { status: 'parsed', publishedAt: null, updatedAt: now });
+      try {
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          batch.update(docRef, { status: 'parsed', publishedAt: null, updatedAt: now });
+        }
+      } catch (e) {
+        // ignore if doc missing
+      }
 
       await batch.commit();
       return { success: true, message: 'Đã xóa toàn bộ nội dung bài giảng và các phần rỗng sinh từ tài liệu thành công!' };
