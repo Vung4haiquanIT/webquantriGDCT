@@ -283,85 +283,54 @@ export function parseSectionsFromText(text: string): ProposedSection[] {
 
   const sectionRegex = /^(PHẦN|CHƯƠNG|BÀI|CHUYÊN ĐỀ|CHỦ ĐỀ|PART|SECTION)\s+([0-9IVXLCDM]+|THỨ\s+[A-ZÀ-Ỹ]+|[0-9]+)\b(.*)/i;
   const uppercaseHeadingRegex = /^[A-Z0-9I-V]+\.\s+[A-ZÀ-Ỹ0-9\s,\.-]{5,100}$/;
-  const itemRegex = /^([0-9]+\.[0-9]*|[I-V]+\.|\d+\.|\bMỤC\s+\d+)\s+(.*)/i;
 
-  let currentSection: ProposedSection | null = null;
-  let currentItem: ProposedItem | null = null;
-  let itemCounter = 1;
+  let currentSectionTitle = 'PHẦN I: NỘI DUNG GIÁO DỤC CHÍNH TRỊ';
+  let currentParagraphs: string[] = [];
+
+  const flushSection = () => {
+    if (currentParagraphs.length > 0 || sections.length === 0) {
+      const bodyHtml = currentParagraphs
+        .map(p => {
+          if (sectionRegex.test(p) || uppercaseHeadingRegex.test(p)) {
+            return `<h4>${escapeHtml(p)}</h4>`;
+          }
+          return `<p>${escapeHtml(p)}</p>`;
+        })
+        .join('\n');
+
+      sections.push({
+        title: currentSectionTitle,
+        items: [
+          {
+            title: `Nội dung chi tiết - ${currentSectionTitle}`,
+            bodyHtml: bodyHtml || '<p>Nội dung đang cập nhật...</p>',
+            paragraphs: currentParagraphs,
+            questions: generateQuestionsForContent(currentSectionTitle, currentParagraphs.join(' '))
+          }
+        ]
+      });
+    }
+  };
 
   for (const line of lines) {
     if (sectionRegex.test(line) || uppercaseHeadingRegex.test(line)) {
-      if (currentItem && currentSection) {
-        if (!currentItem.questions || currentItem.questions.length === 0) {
-          currentItem.questions = generateQuestionsForContent(currentItem.title, currentItem.paragraphs.join(' '));
-        }
-        currentSection.items.push(currentItem);
-        currentItem = null;
+      if (currentParagraphs.length > 0) {
+        flushSection();
+        currentParagraphs = [];
       }
-      if (currentSection) {
-        sections.push(currentSection);
-      }
-      currentSection = {
-        title: line,
-        items: []
-      };
-      itemCounter = 1;
-    } else if (itemRegex.test(line)) {
-      if (!currentSection) {
-        currentSection = {
-          title: 'PHẦN I: NỘI DUNG GIÁO DỤC CHÍNH TRỊ',
-          items: []
-        };
-      }
-      if (currentItem) {
-        if (!currentItem.questions || currentItem.questions.length === 0) {
-          currentItem.questions = generateQuestionsForContent(currentItem.title, currentItem.paragraphs.join(' '));
-        }
-        currentSection.items.push(currentItem);
-      }
-      currentItem = {
-        title: line,
-        bodyHtml: `<p class="mb-3 text-justify leading-relaxed">${escapeHtml(line)}</p>`,
-        paragraphs: [line]
-      };
-      itemCounter++;
+      currentSectionTitle = line;
     } else {
-      if (!currentSection) {
-        currentSection = {
-          title: 'PHẦN I: NỘI DUNG GIÁO DỤC CHÍNH TRỊ',
-          items: []
-        };
-      }
-      if (!currentItem) {
-        const itemTitle = line.length > 50 ? `${line.slice(0, 45)}...` : line;
-        currentItem = {
-          title: `${itemCounter}. ${itemTitle}`,
-          bodyHtml: `<p class="mb-3 text-justify leading-relaxed">${escapeHtml(line)}</p>`,
-          paragraphs: [line]
-        };
-        itemCounter++;
-      } else {
-        currentItem.paragraphs.push(line);
-        currentItem.bodyHtml += `<p class="mb-3 text-justify leading-relaxed">${escapeHtml(line)}</p>`;
-      }
+      currentParagraphs.push(line);
     }
   }
 
-  if (currentItem && currentSection) {
-    if (!currentItem.questions || currentItem.questions.length === 0) {
-      currentItem.questions = generateQuestionsForContent(currentItem.title, currentItem.paragraphs.join(' '));
-    }
-    currentSection.items.push(currentItem);
-  }
-  if (currentSection) {
-    sections.push(currentSection);
-  }
+  flushSection();
 
   // Fallback: If sections array is still empty, create default section from text
   if (sections.length === 0) {
     const fallbackTitle = 'PHẦN I: NỘI DUNG CHÍNH BÀI HỌC';
     const sampleItem: ProposedItem = {
-      title: '1. Nội dung trọng tâm bài giảng',
+      title: 'Nội dung trọng tâm bài giảng',
       bodyHtml: textToSimpleHtml(text) || '<p>Nội dung đang cập nhật...</p>',
       paragraphs: lines.slice(0, 10),
       questions: generateQuestionsForContent('Nội dung trọng tâm bài giảng', text)
@@ -383,7 +352,7 @@ export function autoStructureContent(rawText: string, bodyHtml: string) {
 function textToSimpleHtml(text: string): string {
   if (!text) return '';
   const paragraphs = text.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
-  return paragraphs.map(p => `<p class="mb-3 text-justify leading-relaxed">${escapeHtml(p)}</p>`).join('\n');
+  return paragraphs.map(p => `<p>${escapeHtml(p)}</p>`).join('\n');
 }
 
 function escapeHtml(str: string): string {

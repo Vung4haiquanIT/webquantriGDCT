@@ -708,7 +708,7 @@ export const firestoreService = {
 
   // SOURCE DOCUMENT METADATA
   saveSourceDocument: async (lessonId: string, docData: Partial<SourceDocument>): Promise<SourceDocument> => {
-    const docId = docData.id || `doc-${lessonId}`;
+    const docId = docData.id || `doc-${lessonId}-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     const docRef = doc(db, 'documents', docId);
     const now = new Date().toISOString();
     const assetFolder = docData.assetFolder || docData.cloudinaryFolder || `GDCT_V4/TAILIEU/${lessonId}`;
@@ -743,22 +743,44 @@ export const firestoreService = {
 
     const cleanDoc = sanitizeFirestoreData(documentObj);
     await setDoc(docRef, cleanDoc);
+
+    // Sync all lesson document variables for mobile/student app reading
+    try {
+      const lessonRef = doc(db, 'lessons', lessonId);
+      const allDocs = await firestoreService.getSourceDocuments(lessonId);
+      await updateDoc(lessonRef, {
+        sourceDocuments: allDocs,
+        sourceDocument: allDocs.length > 0 ? allDocs[0] : null,
+        documents: allDocs,
+        sourceDocumentId: allDocs.length > 0 ? allDocs[0].id : docId,
+        updatedAt: now
+      });
+    } catch (syncErr) {
+      console.warn('Could not sync lesson document fields:', syncErr);
+    }
+
     return cleanDoc as SourceDocument;
   },
 
   getSourceDocument: async (lessonId: string): Promise<SourceDocument | null> => {
-    const docRef = doc(db, 'documents', `doc-${lessonId}`);
-    const snap = await getDoc(docRef);
-    if (snap.exists()) return snap.data() as SourceDocument;
-    
-    // Fallback search by lessonId query
     const colRef = collection(db, 'documents');
-    const q = query(colRef, where('lessonId', '==', lessonId), limit(1));
+    const q = query(colRef, where('lessonId', '==', lessonId));
     const querySnap = await getDocs(q);
     if (!querySnap.empty) {
       return querySnap.docs[0].data() as SourceDocument;
     }
     return null;
+  },
+
+  getSourceDocuments: async (lessonId: string): Promise<SourceDocument[]> => {
+    const colRef = collection(db, 'documents');
+    const q = query(colRef, where('lessonId', '==', lessonId));
+    const querySnap = await getDocs(q);
+    const docs: SourceDocument[] = [];
+    querySnap.forEach(d => {
+      docs.push(d.data() as SourceDocument);
+    });
+    return docs;
   },
 
   deleteItemCascade: async (itemId: string): Promise<{ success: boolean }> => {
@@ -965,9 +987,16 @@ export const firestoreService = {
       const docRef = doc(db, 'documents', documentId);
       await deleteDoc(docRef);
 
-      // 3. Remove sourceDocument from lesson if matches
+      // 3. Update remaining source documents on lesson
       const lessonRef = doc(db, 'lessons', lessonId);
-      await updateDoc(lessonRef, { sourceDocument: null, updatedAt: new Date().toISOString() });
+      const remainingDocs = await firestoreService.getSourceDocuments(lessonId);
+      await updateDoc(lessonRef, {
+        sourceDocuments: remainingDocs,
+        sourceDocument: remainingDocs.length > 0 ? remainingDocs[0] : null,
+        documents: remainingDocs,
+        sourceDocumentId: remainingDocs.length > 0 ? remainingDocs[0].id : '',
+        updatedAt: new Date().toISOString()
+      });
 
       // 4. Delete Cloudinary file if publicId exists
       let cloudinaryDeleted = true;

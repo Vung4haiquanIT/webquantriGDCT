@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   ArrowLeft, 
   Layers, 
@@ -86,6 +86,7 @@ import { api } from '../services/api';
 import { naturalSortFilenames } from '../utils/naturalSort';
 import { DongSonDrum } from '../components/DongSonMotif';
 import { parseDocumentFile, generateQuestionsForContent, ParsedDocumentResult } from '../utils/documentParser';
+import { QuillEditor } from '../components/QuillEditor';
 
 // Uncle Ho Navy / Military Teaching Templates for Quick-Fill
 const UNCLE_HO_PRESETS = [
@@ -200,6 +201,8 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
   // Contents data
   const [contents, setContents] = useState<ContentSection[]>([]);
   const [loadingContents, setLoadingContents] = useState(true);
+  const [contentBodyHtml, setContentBodyHtml] = useState<string>('');
+  const [isSavingContent, setIsSavingContent] = useState<boolean>(false);
   const [editingContentId, setEditingContentId] = useState<string | null>(null);
   const [contentFormData, setContentFormData] = useState<Partial<ContentSection>>({
     title: '',
@@ -294,6 +297,8 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
 
 
 
+
+
   const [showPreUploadModal, setShowPreUploadModal] = useState(false);
   const [selectedPptxFile, setSelectedPptxFile] = useState<File | null>(null);
   const [duplicateJobWarning, setDuplicateJobWarning] = useState<any | null>(null);
@@ -305,7 +310,7 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
   const [sections, setSections] = useState<LessonSection[]>([]);
   const [items, setItems] = useState<LessonItem[]>([]);
   const [questions, setQuestions] = useState<LessonQuestion[]>([]);
-  const [sourceDoc, setSourceDoc] = useState<SourceDocument | null>(null);
+  const [sourceDocs, setSourceDocs] = useState<SourceDocument[]>([]);
 
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
   const [activeItemId, setActiveItemId] = useState<string | null>(null);
@@ -375,12 +380,12 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
   const loadStructuredData = async () => {
     try {
       const [docRes, secRes, itemsRes, qRes] = await Promise.all([
-        api.getSourceDocument(lesson.id),
+        api.getSourceDocuments(lesson.id),
         api.getSections(lesson.id),
         api.getItems(lesson.id),
         api.getQuestions(lesson.id)
       ]);
-      setSourceDoc(docRes);
+      setSourceDocs(docRes);
       setSections(secRes);
       setItems(itemsRes);
       setQuestions(qRes);
@@ -413,6 +418,11 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
 
       setSlides(slidesRes);
       setContents(contentsRes);
+      if (contentsRes.length > 0) {
+        setContentBodyHtml(contentsRes[0].bodyHtml || '');
+      } else {
+        setContentBodyHtml('');
+      }
       setVideos(videosRes);
       setAudios(audiosRes);
       await loadStructuredData();
@@ -426,9 +436,190 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
     }
   };
 
+  // Handlers for simplified main content and Word/PDF document download upload
+  const handleSaveMainContent = async () => {
+    try {
+      setIsSavingContent(true);
+      if (contents.length > 0) {
+        const updated = await api.updateContent(contents[0].id, {
+          bodyHtml: contentBodyHtml,
+          title: currentLesson.title || 'Nội dung bài học',
+          updatedAt: new Date().toISOString()
+        });
+        setContents([updated]);
+      } else {
+        const created = await api.createContent(currentLesson.id, {
+          lessonId: currentLesson.id,
+          title: currentLesson.title || 'Nội dung bài học',
+          bodyHtml: contentBodyHtml,
+          order: 1
+        });
+        setContents([created]);
+      }
+      showToast('Đã lưu nội dung bài học lên Firebase thành công!');
+    } catch (err: any) {
+      console.error('Error saving content:', err);
+      showToast('Lỗi khi lưu nội dung: ' + (err.message || 'Lỗi hệ thống'));
+    } finally {
+      setIsSavingContent(false);
+    }
+  };
+
+  const handleUploadLessonDocuments = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    try {
+      setIsParsingDoc(true);
+      setDocUploadStepText(`Đang tải lên ${files.length} tài liệu...`);
+      const updatedDocs = [...sourceDocs];
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        setDocUploadStepText(`Đang tải lên (${i + 1}/${files.length}): ${file.name}...`);
+        const cloudResult = await api.uploadDocumentFile(file, currentLesson.id);
+        if (!cloudResult || !cloudResult.secureUrl) {
+          throw new Error(`Upload file ${file.name} không thành công.`);
+        }
+        const docExt = file.name.substring(file.name.lastIndexOf('.')).toLowerCase().replace('.', '');
+        const docMeta: Partial<SourceDocument> = {
+          name: file.name,
+          fileName: file.name,
+          originalName: file.name,
+          type: (['pdf', 'doc', 'docx'].includes(docExt) ? docExt : 'docx') as any,
+          size: file.size,
+          fileSize: file.size,
+          url: cloudResult.secureUrl,
+          secureUrl: cloudResult.secureUrl,
+          cloudinaryUrl: cloudResult.secureUrl,
+          cloudinaryPublicId: cloudResult.publicId,
+          assetFolder: cloudResult.assetFolder || `GDCT_V4/TAILIEU/${currentLesson.id}`,
+          resourceType: cloudResult.resourceType || 'raw',
+          format: docExt,
+          mimeType: file.type || 'application/octet-stream',
+          status: 'READY',
+          createdAt: new Date().toISOString()
+        };
+        const savedDoc = await api.saveSourceDocument(currentLesson.id, docMeta);
+        updatedDocs.push(savedDoc);
+      }
+
+      setSourceDocs(updatedDocs);
+      showToast(`Đã tải lên thành công ${files.length} tài liệu đính kèm! Học viên có thể tải về trên ứng dụng.`);
+    } catch (err: any) {
+      console.error('Error uploading lesson docs:', err);
+      showToast('Lỗi tải tài liệu: ' + (err.message || 'Lỗi hệ thống'));
+    } finally {
+      setIsParsingDoc(false);
+      setDocUploadStepText('');
+      if (e.target) e.target.value = '';
+    }
+  };
+
+  const handleDeleteDocument = async (docObj: SourceDocument) => {
+    try {
+      await api.deleteSourceDocumentCascade(
+        currentLesson.id,
+        docObj.id,
+        docObj.cloudinaryPublicId || (docObj as any).storagePath || '',
+        docObj.resourceType || 'raw'
+      );
+      setSourceDocs(prev => prev.filter(d => d.id !== docObj.id));
+      showToast('Đã xóa tài liệu đính kèm thành công!');
+    } catch (err: any) {
+      console.error('Error deleting document:', err);
+      showToast('Lỗi khi xóa tài liệu: ' + (err.message || 'Lỗi hệ thống'));
+    }
+  };
+
 
 
   // Document Parser & Proposal Handlers
+  const importProposalData = async (res: ParsedDocumentResult, docObj: any) => {
+    try {
+      setIsSavingStructuredContent(true);
+      setDocUploadStepText('⑦ Đang đưa vào bài học...');
+      let secOrder = 1;
+      let createdCountSec = 0;
+      let createdCountItems = 0;
+
+      const targetSections = res.proposedSections || res.sections || [];
+      if (targetSections.length === 0) {
+        showToast('⚠️ Không tìm thấy Phần/Mục nào trong tài liệu.');
+        return;
+      }
+
+      for (const proposedSec of targetSections) {
+        const newSec = await api.createSection(currentLesson.id, {
+          title: proposedSec.title || `PHẦN ${secOrder}`,
+          order: secOrder++,
+          sourceDocumentId: docObj?.id || `doc-${currentLesson.id}`
+        });
+
+        // Automatically create 1 essay question per section
+        await api.createQuestion(currentLesson.id, '', {
+          sectionId: newSec.id,
+          type: 'essay',
+          question: `Qua các nội dung đã học trong ${newSec.title}, đồng chí hãy trình bày những nội dung trọng tâm cần ghi nhớ liên quan đến tài liệu đã nghiên cứu.`,
+          maxScore: 10,
+          required: true,
+          sourceDocumentId: docObj?.id || `doc-${currentLesson.id}`,
+          order: 99
+        });
+
+        let itemOrder = 1;
+        const targetItems = proposedSec.items || [];
+        for (const proposedItem of targetItems) {
+          const newItem = await api.createItem(currentLesson.id, newSec.id, {
+            title: proposedItem.title || `Mục ${itemOrder}`,
+            content: proposedItem.bodyHtml || '<p>Nội dung đang cập nhật...</p>',
+            bodyHtml: proposedItem.bodyHtml || '<p>Nội dung đang cập nhật...</p>',
+            sourceDocumentId: docObj?.id || `doc-${currentLesson.id}`,
+            paragraphs: proposedItem.paragraphs || [],
+            order: itemOrder++
+          });
+          createdCountItems++;
+          if (proposedItem.questions && proposedItem.questions.length > 0) {
+            let qOrder = 1;
+            for (const pq of proposedItem.questions) {
+              await api.createQuestion(currentLesson.id, newItem.id, {
+                question: pq.question,
+                type: (pq.type || 'single_choice') as QuestionType,
+                options: pq.options || ['A', 'B', 'C', 'D'],
+                correctAnswer: pq.correctAnswer ?? 0,
+                explanation: pq.explanation || '',
+                sourceDocumentId: docObj?.id || `doc-${currentLesson.id}`,
+                order: qOrder++,
+                points: 10
+              });
+            }
+          }
+        }
+        createdCountSec++;
+      }
+
+      // Update source document status to 'published'
+      if (docObj) {
+        const updatedDoc = await api.saveSourceDocument(currentLesson.id, {
+          ...docObj,
+          status: 'published',
+          publishedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+        setSourceDocs(prev => prev.map(d => d.id === updatedDoc.id ? updatedDoc : d));
+      }
+
+      setDocUploadStepText('⑦ Đã đưa vào bài học ✓');
+      showToast(`Đã đưa toàn bộ vào bài học thành công: ${createdCountSec} phần, ${createdCountItems} mục!`);
+      await loadStructuredData();
+    } catch (err: any) {
+      console.error('Error importing proposal:', err);
+      showToast('Lỗi khi lưu cấu trúc: ' + (err.message || 'Lỗi hệ thống'));
+    } finally {
+      setIsSavingStructuredContent(false);
+      setDocUploadStepText('');
+    }
+  };
+
   const handleDocFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -467,7 +658,7 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
       };
 
       const savedDoc = await api.saveSourceDocument(currentLesson.id, docMeta);
-      setSourceDoc(savedDoc);
+      setSourceDocs(prev => [...prev, savedDoc]);
 
       // STEP 3 & 4: Read and Analyze Document
       setDocUploadStepText('③ Đang đọc tài liệu...');
@@ -481,13 +672,9 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
         await api.saveSourceDocument(currentLesson.id, savedDoc);
       }
 
-      // STEP 5 & 6: Create Structure & Wait for Admin Confirmation
-      setDocUploadStepText('⑤ Đã tạo cấu trúc');
-      setParsedProposal(res);
-
-      setDocUploadStepText('⑥ Chờ Admin xác nhận');
-      setProposalModalOpen(true);
-      showToast('Đã đọc tài liệu & tải lên Cloudinary thành công! Kiểm tra cấu trúc đề xuất.');
+      // STEP 5 & 6: Create Structure Automatically
+      setDocUploadStepText('⑤ Đang tạo cấu trúc bài học...');
+      await importProposalData(res, savedDoc);
     } catch (err: any) {
       console.error('Error in handleDocFileSelect:', err);
       const errMsg = err?.message || 'Không thể đọc hoặc tải tệp tài liệu này';
@@ -499,161 +686,9 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
     }
   };
 
-  const handleParseExistingDoc = async () => {
-    if (!sourceDoc) return;
-    if (parsedProposal) {
-      setProposalModalOpen(true);
-      return;
-    }
-    const docUrl = sourceDoc.cloudinaryUrl || sourceDoc.secureUrl || sourceDoc.url;
-    if (!docUrl) {
-      showToast('⚠️ Không tìm thấy URL tài liệu trên Cloudinary');
-      return;
-    }
-    try {
-      setIsParsingDoc(true);
-      setDocUploadStepText('③ Đang tải tệp từ Cloudinary...');
-      const resp = await fetch(docUrl);
-      if (!resp.ok) throw new Error('HTTP ' + resp.status + ' khi tải từ Cloudinary');
-      const blob = await resp.blob();
-      const docFile = new File([blob], sourceDoc.name || sourceDoc.fileName || 'document.docx', {
-        type: sourceDoc.mimeType || blob.type || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-      });
-      setDocUploadStepText('④ Đang phân tích cấu trúc...');
-      const res = await parseDocumentFile(docFile, (stage) => setDocUploadStepText(`④ ${stage}`));
-      setParsedProposal(res);
-      setDocUploadStepText('⑥ Chờ Admin xác nhận');
-      setProposalModalOpen(true);
-      showToast('Đã đọc & phân tích tài liệu từ Cloudinary thành công!');
-    } catch (err: any) {
-      console.error('Lỗi khi đọc tài liệu từ Cloudinary:', err);
-      showToast('❌ Lỗi đọc từ Cloudinary: ' + (err.message || 'Lỗi kết nối'));
-    } finally {
-      setIsParsingDoc(false);
-    }
-  };
 
-  const [showDeleteDocModal, setShowDeleteDocModal] = useState(false);
 
-  const handleExecuteDeleteSourceDoc = async () => {
-    if (!sourceDoc) return;
-    setShowDeleteDocModal(false);
-    try {
-      setIsParsingDoc(true);
-      setDocUploadStepText('Đang xóa tài liệu & làm sạch bài học...');
-      const res = await api.deleteSourceDocumentCascade(
-        currentLesson.id,
-        sourceDoc.id,
-        sourceDoc.cloudinaryPublicId || (sourceDoc as any).storagePath || '',
-        (sourceDoc.resourceType as any) || 'raw'
-      );
-      
-      // Reset full document and lesson states to initial empty dropzone state
-      setSourceDoc(null);
-      setParsedProposal(null);
-      setSections([]);
-      setItems([]);
-      setQuestions([]);
-      setActiveSectionId(null);
-      setActiveItemId(null);
-      
-      showToast(res?.message || 'Đã xóa tài liệu trên Cloudinary và toàn bộ cấu trúc bài học thành công!');
-    } catch (err: any) {
-      console.error('Error deleting source document cascade:', err);
-      showToast('❌ Lỗi xóa tài liệu: ' + (err.message || 'Lỗi hệ thống'));
-      await loadStructuredData();
-    } finally {
-      setIsParsingDoc(false);
-      setDocUploadStepText('');
-    }
-  };
 
-  const handleConfirmProposal = async () => {
-    if (!parsedProposal) return;
-    try {
-      setIsSavingStructuredContent(true);
-      setDocUploadStepText('⑦ Đang đưa vào bài học...');
-      let secOrder = 1;
-      let createdCountSec = 0;
-      let createdCountItems = 0;
-
-      const targetSections = parsedProposal.proposedSections || parsedProposal.sections || [];
-      if (targetSections.length === 0) {
-        showToast('⚠️ Không tìm thấy Phần/Mục nào trong tài liệu.');
-        return;
-      }
-
-      for (const proposedSec of targetSections) {
-        const newSec = await api.createSection(currentLesson.id, {
-          title: proposedSec.title || `PHẦN ${secOrder}`,
-          order: secOrder++,
-          sourceDocumentId: sourceDoc?.id || `doc-${currentLesson.id}`
-        });
-
-        // Automatically create 1 essay question per section
-        await api.createQuestion(currentLesson.id, '', {
-          sectionId: newSec.id,
-          type: 'essay',
-          question: `Qua các nội dung đã học trong ${newSec.title}, đồng chí hãy trình bày những nội dung trọng tâm cần ghi nhớ liên quan đến tài liệu đã nghiên cứu.`,
-          maxScore: 10,
-          required: true,
-          sourceDocumentId: sourceDoc?.id || `doc-${currentLesson.id}`,
-          order: 99
-        });
-
-        let itemOrder = 1;
-        const targetItems = proposedSec.items || [];
-        for (const proposedItem of targetItems) {
-          const newItem = await api.createItem(currentLesson.id, newSec.id, {
-            title: proposedItem.title || `Mục ${itemOrder}`,
-            content: proposedItem.bodyHtml || '<p>Nội dung đang cập nhật...</p>',
-            bodyHtml: proposedItem.bodyHtml || '<p>Nội dung đang cập nhật...</p>',
-            sourceDocumentId: sourceDoc?.id || `doc-${currentLesson.id}`,
-            paragraphs: proposedItem.paragraphs || [],
-            order: itemOrder++
-          });
-          createdCountItems++;
-          if (proposedItem.questions && proposedItem.questions.length > 0) {
-            let qOrder = 1;
-            for (const pq of proposedItem.questions) {
-              await api.createQuestion(currentLesson.id, newItem.id, {
-                question: pq.question,
-                type: (pq.type || 'single_choice') as QuestionType,
-                options: pq.options || ['A', 'B', 'C', 'D'],
-                correctAnswer: pq.correctAnswer ?? 0,
-                explanation: pq.explanation || '',
-                sourceDocumentId: sourceDoc?.id || `doc-${currentLesson.id}`,
-                order: qOrder++,
-                points: 10
-              });
-            }
-          }
-        }
-        createdCountSec++;
-      }
-
-      // Update source document status to 'published'
-      if (sourceDoc) {
-        const updatedDoc = await api.saveSourceDocument(currentLesson.id, {
-          ...sourceDoc,
-          status: 'published',
-          publishedAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        });
-        setSourceDoc(updatedDoc);
-      }
-
-      setDocUploadStepText('⑦ Đã đưa vào bài học ✓');
-      setProposalModalOpen(false);
-      showToast(`Đã đưa toàn bộ vào bài học thành công: ${createdCountSec} phần, ${createdCountItems} mục!`);
-      await loadStructuredData();
-    } catch (err: any) {
-      console.error('Error confirming proposal:', err);
-      showToast('Lỗi khi lưu cấu trúc đề xuất: ' + (err.message || 'Lỗi hệ thống'));
-    } finally {
-      setIsSavingStructuredContent(false);
-    }
-  };
 
   // Structured CRUD Handlers
   const handleAddSection = async () => {
@@ -683,7 +718,7 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
       setSections([]);
       setItems([]);
       setQuestions([]);
-      setSourceDoc(null);
+      setSourceDocs([]);
       setParsedProposal(null);
       setActiveSectionId(null);
       setActiveItemId(null);
@@ -2342,785 +2377,157 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
           {/* ========================================================= */}
           {activeModuleTab === 'contents' && (
             <div className="space-y-6">
-              {/* TOP HEADER & DOCUMENT FILE UPLOAD ZONE */}
-              <div className="bg-gradient-to-r from-slate-900 via-blue-950 to-slate-900 p-5 rounded-2xl border border-blue-900/60 text-white flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-md">
+              {/* TOP HEADER */}
+              <div className="bg-gradient-to-r from-slate-900 via-blue-950 to-slate-900 p-6 rounded-2xl border border-blue-900/60 text-white flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-md">
                 <div>
                   <div className="flex items-center space-x-2">
-                    <span className="bg-amber-500 text-slate-950 font-bold px-2 py-0.5 rounded text-[10px] tracking-wider uppercase flex items-center gap-1">
-                      <DongSonDrum className="w-3.5 h-3.5" color="#020617" /> Mô hình Cấu trúc Chuẩn GDCT
+                    <span className="bg-amber-500 text-slate-950 font-bold px-2.5 py-0.5 rounded text-[10px] tracking-wider uppercase flex items-center gap-1">
+                      <DongSonDrum className="w-3.5 h-3.5" color="#020617" /> Biên soạn nội dung & Tài liệu học tập
                     </span>
-                    <span className="text-blue-300 text-xs font-mono">Tài liệu GDCT → Phần → Mục → Nội dung → Câu hỏi</span>
                   </div>
-                  <h3 className="text-base font-bold text-white mt-1 flex items-center gap-2">
-                    <span>Quản lý & Phân chia Nội dung Bài giảng GDCT</span>
+                  <h3 className="text-base font-bold text-white mt-1">
+                    Biên soạn nội dung bài giảng & Đính kèm tài liệu Word / PDF
                   </h3>
                   <p className="text-xs text-slate-300 mt-0.5 max-w-2xl">
-                    Nhập file tài liệu bài giảng (.docx, .doc, .pdf) để tự động đọc cấu trúc các Phần & Mục, hoặc tự biên soạn bài giảng chuẩn chính trị quân đội.
+                    Soạn thảo nội dung trực quan bằng trình soạn thảo Quill để đồng bộ lên Firebase hiển thị trên ứng dụng, đồng thời đính kèm tài liệu Word hoặc PDF để học viên tải về.
                   </p>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2.5">
-                  <label className="flex items-center space-x-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-4 py-2.5 rounded-xl font-bold text-xs shadow-md cursor-pointer transition-all active:scale-95 disabled:opacity-60">
-                    <FileUp className={`w-4 h-4 ${isParsingDoc ? 'animate-bounce' : ''}`} />
-                    <span>{isParsingDoc ? (docUploadStepText || 'Đang xử lý...') : 'TẢI TÀI LIỆU (DOCX, PDF, RTF)'}</span>
-                    <input
-                      type="file"
-                      accept=".docx,.doc,.pdf,.docm,.dot,.dotx,.dotm,.rtf"
-                      disabled={isParsingDoc}
-                      onChange={handleDocFileSelect}
-                      className="hidden"
-                    />
-                  </label>
-
-                  {sourceDoc && (
-                    <button
-                      onClick={() => {
-                        if (sourceDoc) {
-                          setShowPresetsLibrary(true);
-                        }
-                      }}
-                      className="bg-slate-800 hover:bg-slate-700 text-amber-400 border border-amber-500/30 px-3 py-2.5 rounded-xl font-bold text-xs flex items-center space-x-1.5 transition-all"
-                    >
-                      <Library className="w-4 h-4" />
-                      <span>Thư viện Mẫu</span>
-                    </button>
-                  )}
+                <div className="flex items-center space-x-3">
+                  <button
+                    onClick={handleSaveMainContent}
+                    disabled={isSavingContent}
+                    className="px-5 py-3 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-extrabold text-xs rounded-xl shadow-lg flex items-center space-x-2 transition-all cursor-pointer disabled:opacity-50 active:scale-95"
+                  >
+                    <Save className={`w-4 h-4 ${isSavingContent ? 'animate-spin' : ''}`} />
+                    <span>{isSavingContent ? 'Đang lưu...' : 'LƯU NỘI DUNG LÊN FIREBASE'}</span>
+                  </button>
                 </div>
               </div>
 
-              {/* TECHNICAL ERROR DETAILS FOR ADMIN */}
-              {docErrorDetails && (
-                <div className="bg-red-950/90 border border-red-500/50 p-4 rounded-xl text-red-100 text-xs space-y-2 shadow-lg">
-                  <div className="flex items-center justify-between font-bold text-red-300">
-                    <div className="flex items-center space-x-2">
-                      <AlertTriangle className="w-4 h-4 text-red-400" />
-                      <span>LỖI ĐỌC TÀI LIỆU — CHI TIẾT KỸ THUẬT QUẢN TRỊ VIÊN</span>
-                    </div>
-                    <button
-                      onClick={() => setDocErrorDetails(null)}
-                      className="text-red-400 hover:text-white font-mono text-xs px-2 py-0.5 rounded bg-red-900/50"
-                    >
-                      Đóng
-                    </button>
+              {/* QUILL EDITOR SECTION */}
+              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div className="flex items-center space-x-2">
+                    <FileText className="w-5 h-5 text-blue-600" />
+                    <h4 className="text-sm font-bold text-slate-800">Trình soạn thảo nội dung bài giảng (Quill WYSIWYG)</h4>
                   </div>
-                  <pre className="p-3 bg-slate-950 text-red-200 font-mono text-[10px] rounded-lg overflow-x-auto border border-red-900/40 max-h-40 whitespace-pre-wrap">
-                    {docErrorDetails}
-                  </pre>
+                  <span className="text-xs text-slate-500 font-mono">Đồng bộ trực tiếp với Firebase</span>
                 </div>
-              )}
 
-              {/* ATTACHED SOURCE DOCUMENT BADGE */}
-              {sourceDoc && (
-                <div className="bg-slate-900 text-white p-4 rounded-xl border border-blue-800/60 shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <QuillEditor
+                  value={contentBodyHtml}
+                  onChange={(html) => setContentBodyHtml(html)}
+                  placeholder="Nhập nội dung bài giảng giáo dục chính trị để hiển thị trên ứng dụng học viên..."
+                />
+
+                <div className="flex justify-end pt-2">
+                  <button
+                    onClick={handleSaveMainContent}
+                    disabled={isSavingContent}
+                    className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-sm flex items-center space-x-2 transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    <Save className="w-4 h-4" />
+                    <span>{isSavingContent ? 'Đang lưu...' : 'Lưu nội dung bài giảng'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* DOCUMENT UPLOAD & DOWNLOAD SECTION FOR WORD / PDF (MULTIPLE FILES) */}
+              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                  <div className="flex items-center space-x-2">
+                    <FileUp className="w-5 h-5 text-indigo-600" />
+                    <h4 className="text-sm font-bold text-slate-800">Tài liệu đính kèm (Word / PDF) cho học viên tải về ({sourceDocs.length} tài liệu)</h4>
+                  </div>
                   <div className="flex items-center space-x-3">
-                    <div className="p-2.5 bg-blue-600/20 text-blue-400 rounded-lg border border-blue-500/30">
-                      <FileCheck2 className="w-5 h-5" />
+                    <span className="text-xs text-slate-500 font-mono">Hỗ trợ .docx, .doc, .pdf</span>
+                    <label className="px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs rounded-xl shadow-sm cursor-pointer flex items-center space-x-1.5 transition-all active:scale-95 disabled:opacity-50">
+                      <FileUp className={`w-3.5 h-3.5 ${isParsingDoc ? 'animate-bounce' : ''}`} />
+                      <span>{isParsingDoc ? (docUploadStepText || 'Đang tải lên...') : '+ Tải lên tài liệu'}</span>
+                      <input
+                        type="file"
+                        multiple
+                        accept=".docx,.doc,.pdf"
+                        disabled={isParsingDoc}
+                        onChange={handleUploadLessonDocuments}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                {sourceDocs.length === 0 ? (
+                  <div className="border-2 border-dashed border-slate-300 rounded-2xl p-8 text-center space-y-3 bg-slate-50/50">
+                    <FileUp className="w-10 h-10 mx-auto text-slate-400" />
+                    <div>
+                      <h5 className="text-sm font-bold text-slate-700">Chưa có tài liệu đính kèm nào</h5>
+                      <p className="text-xs text-slate-500 mt-0.5">Tải lên nhiều file tài liệu Word (.docx, .doc) hoặc PDF để học viên có thể tải về trên ứng dụng.</p>
                     </div>
                     <div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-xs font-bold text-white">{sourceDoc.name || sourceDoc.fileName}</span>
-                        <span className="text-[10px] uppercase font-mono px-2 py-0.5 bg-blue-900 text-blue-300 rounded font-bold">
-                          {(sourceDoc.type || 'DOCX').toUpperCase()}
-                        </span>
-                        <span className="text-[10px] font-mono text-slate-400">
-                          ({sourceDoc.size ? (sourceDoc.size > 1024 * 1024 ? `${(sourceDoc.size / (1024 * 1024)).toFixed(2)} MB` : `${Math.round(sourceDoc.size / 1024)} KB`) : '---'})
-                        </span>
-                        <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-500/40 px-2 py-0.5 rounded flex items-center gap-1">
-                          <Check className="w-3 h-3 text-emerald-400" />
-                          Đã lưu Cloudinary ✓
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-slate-400 mt-1">
-                        Tải lên: {new Date(sourceDoc.createdAt || (sourceDoc as any).uploadedAt || Date.now()).toLocaleString('vi-VN')}
-                        {sourceDoc.pageCount ? ` • Số trang: ${sourceDoc.pageCount}` : ''}
-                        {sourceDoc.assetFolder ? ` • Thư mục: ${sourceDoc.assetFolder}` : ''}
-                      </p>
+                      <label className="inline-flex items-center space-x-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-5 py-2.5 rounded-xl font-bold text-xs shadow-md cursor-pointer transition-all active:scale-95 disabled:opacity-50">
+                        <FileUp className={`w-4 h-4 ${isParsingDoc ? 'animate-bounce' : ''}`} />
+                        <span>{isParsingDoc ? (docUploadStepText || 'Đang tải lên...') : 'CHỌN FILE WORD HOẶC PDF (CÓ THỂ CHỌN NHIỀU)'}</span>
+                        <input
+                          type="file"
+                          multiple
+                          accept=".docx,.doc,.pdf"
+                          disabled={isParsingDoc}
+                          onChange={handleUploadLessonDocuments}
+                          className="hidden"
+                        />
+                      </label>
                     </div>
                   </div>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      onClick={handleParseExistingDoc}
-                      disabled={isParsingDoc}
-                      className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs px-3 py-1.5 rounded-lg flex items-center space-x-1 shadow-sm transition-all cursor-pointer disabled:opacity-50"
-                    >
-                      <Sparkles className={`w-3.5 h-3.5 ${isParsingDoc ? 'animate-spin' : ''}`} />
-                      <span>{isParsingDoc ? (docUploadStepText || 'Đang đọc...') : 'ĐỌC & PHÂN TÍCH'}</span>
-                    </button>
-
-                    {(sourceDoc.cloudinaryUrl || sourceDoc.url || (sourceDoc as any).secureUrl) && (
-                      <button
-                        onClick={() => {
-                          const docUrl = sourceDoc.cloudinaryUrl || sourceDoc.url || (sourceDoc as any).secureUrl;
-                          window.open(docUrl, '_blank', 'noopener,noreferrer');
-                        }}
-                        className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-3 py-1.5 rounded-lg flex items-center space-x-1 shadow-sm transition-all cursor-pointer"
-                      >
-                        <FileUp className="w-3.5 h-3.5 rotate-90" />
-                        <span>MỞ TÀI LIỆU</span>
-                      </button>
-                    )}
-
-                    <button
-                      onClick={() => setShowDeleteDocModal(true)}
-                      className="bg-red-950/80 hover:bg-red-900 text-red-300 border border-red-800/60 font-bold text-xs px-3 py-1.5 rounded-lg flex items-center space-x-1 transition-all cursor-pointer"
-                      title="Xóa tài liệu và toàn bộ cấu trúc bài học"
-                    >
-                      <Trash2 className="w-3.5 h-3.5 text-red-400" />
-                      <span>XÓA TÀI LIỆU</span>
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* INLINE PARSED PROPOSAL CARD (📖 NỘI DUNG ĐÃ PHÂN TÍCH) */}
-              {parsedProposal && (
-                <div className="bg-slate-900 text-white p-5 rounded-2xl border border-amber-500/50 shadow-xl space-y-4">
-                  <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                    <div className="flex items-center space-x-2">
-                      <Sparkles className="w-5 h-5 text-amber-400" />
-                      <h4 className="text-sm font-bold text-white uppercase tracking-wide">📖 NỘI DUNG ĐÃ PHÂN TÍCH</h4>
-                    </div>
-                    <span className="text-xs font-mono text-amber-400 bg-amber-950/80 px-2.5 py-1 rounded-md border border-amber-500/30 font-bold">
-                      {(parsedProposal.proposedSections || parsedProposal.sections || []).length} Phần đã cấu trúc
-                    </span>
-                  </div>
-
-                  <div className="space-y-3 bg-slate-950 p-4 rounded-xl border border-slate-800 text-xs font-mono max-h-64 overflow-y-auto">
-                    {(parsedProposal.proposedSections || parsedProposal.sections || []).map((sec, idx) => (
-                      <div key={idx} className="space-y-1.5 border-b border-slate-800/80 pb-2.5 last:border-0 last:pb-0">
-                        <div className="font-bold text-amber-300 flex items-center space-x-2">
-                          <BookOpen className="w-4 h-4 text-amber-400 shrink-0" />
-                          <span>📘 {sec.title || `PHẦN ${idx + 1}`}</span>
-                        </div>
-                        <div className="pl-6 space-y-1 text-slate-300 text-[11px]">
-                          {(sec.items || []).map((item, iIdx) => (
-                            <div key={iIdx} className="flex items-center justify-between py-0.5">
-                              <span>├─ {item.title || `Mục ${iIdx + 1}`}</span>
-                              <span className="text-slate-500 font-mono">({(item.bodyHtml || '').length} ký tự)</span>
+                ) : (
+                  <div className="space-y-3">
+                    {sourceDocs.map((docObj, dIdx) => (
+                      <div key={docObj.id || dIdx} className="bg-slate-900 text-white p-4 rounded-xl border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div className="flex items-center space-x-3">
+                          <div className="p-3 bg-blue-600/20 text-blue-400 rounded-xl border border-blue-500/30">
+                            <FileCheck2 className="w-6 h-6" />
+                          </div>
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-sm font-bold text-white">{docObj.name || docObj.fileName}</span>
+                              <span className="text-[10px] uppercase font-mono px-2 py-0.5 bg-blue-900 text-blue-300 rounded font-bold">
+                                {(docObj.type || 'DOCX').toUpperCase()}
+                              </span>
+                              <span className="text-xs font-mono text-slate-400">
+                                ({docObj.size ? (docObj.size > 1024 * 1024 ? `${(docObj.size / (1024 * 1024)).toFixed(2)} MB` : `${Math.round(docObj.size / 1024)} KB`) : '---'})
+                              </span>
                             </div>
-                          ))}
+                            <p className="text-xs text-slate-400 mt-1">
+                              Đã đăng tải: {new Date(docObj.createdAt || Date.now()).toLocaleString('vi-VN')} • Sẵn sàng cho học viên tải về trên ứng dụng.
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center space-x-2 shrink-0">
+                          {(docObj.cloudinaryUrl || docObj.url || (docObj as any).secureUrl) && (
+                            <button
+                              onClick={() => {
+                                const url = docObj.cloudinaryUrl || docObj.url || (docObj as any).secureUrl;
+                                window.open(url, '_blank', 'noopener,noreferrer');
+                              }}
+                              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl shadow-sm flex items-center space-x-1.5 cursor-pointer"
+                            >
+                              <FileUp className="w-4 h-4 rotate-90" />
+                              <span>Tải xuống / Mở</span>
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleDeleteDocument(docObj)}
+                            className="px-3 py-2 bg-red-950/80 hover:bg-red-900 text-red-300 border border-red-800 font-bold text-xs rounded-xl cursor-pointer"
+                            title="Xóa tài liệu này"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
                         </div>
                       </div>
                     ))}
                   </div>
-
-                  <div className="flex justify-end pt-2">
-                    <button
-                      disabled={isSavingStructuredContent}
-                      onClick={handleConfirmProposal}
-                      className="px-5 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs rounded-xl shadow-lg flex items-center space-x-2 cursor-pointer disabled:opacity-50 transition-all active:scale-95"
-                    >
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span>{isSavingStructuredContent ? 'Đang đưa vào bài học...' : 'ĐƯA TOÀN BỘ VÀO BÀI HỌC'}</span>
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* 2-COLUMN WORKSPACE: LEFT TREE + RIGHT CONTENT EDITOR */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                {/* LEFT COLUMN: DANH SÁCH PHẦN & MỤC (DOCUMENT HIERARCHY TREE) */}
-                <div className="lg:col-span-4 space-y-4">
-                  <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-3">
-                    <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
-                      <div className="flex items-center space-x-2">
-                        <FolderTree className="w-4 h-4 text-blue-600" />
-                        <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wide">
-                          Cấu trúc Bài học ({sections.length} Phần)
-                        </h4>
-                      </div>
-
-                      <div className="flex items-center space-x-1.5">
-                        {sections.length > 0 && (
-                          <button
-                            type="button"
-                            onClick={handleClearAllStructure}
-                            className="bg-red-50 hover:bg-red-100 text-red-600 font-bold text-xs px-2.5 py-1 rounded-lg border border-red-200 flex items-center space-x-1 transition-all cursor-pointer shadow-2xs"
-                            title="Xóa toàn bộ cấu trúc bài học"
-                          >
-                            <Trash2 className="w-3 h-3 text-red-500" />
-                            <span>Xóa tất cả</span>
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={handleAddSection}
-                          className="bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-xs px-2.5 py-1 rounded-lg border border-blue-200 flex items-center space-x-1 transition-all cursor-pointer shadow-2xs"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                          <span>Thêm Phần</span>
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* SECTIONS & ITEMS TREE */}
-                    {sections.length === 0 ? (
-                      <div className="py-8 text-center text-slate-400 space-y-2">
-                        <FolderPlus className="w-8 h-8 mx-auto text-slate-300" />
-                        <p className="text-xs font-semibold text-slate-600">Chưa có Phần nào trong bài học</p>
-                        <p className="text-[11px] text-slate-400">Tải file tài liệu hoặc bấm <strong>"Thêm Phần"</strong> để tạo thủ công.</p>
-                      </div>
-                    ) : (
-                      <div className="space-y-3 max-h-[700px] overflow-y-auto pr-1">
-                        {sections.map((sec, secIdx) => {
-                          const secItems = items.filter(i => i.sectionId === sec.id);
-                          const isSecActive = activeSectionId === sec.id;
-
-                          return (
-                            <div
-                              key={sec.id}
-                              className={`rounded-xl border transition-all ${
-                                isSecActive
-                                   ? 'border-blue-500 bg-blue-50/30 shadow-2xs'
-                                  : 'border-slate-200 bg-slate-50/50 hover:border-slate-300'
-                              }`}
-                            >
-                              {/* Section Header */}
-                              <div 
-                                onClick={() => {
-                                  setActiveSectionId(sec.id);
-                                  if (secItems.length > 0 && (!activeItemId || !secItems.some(i => i.id === activeItemId))) {
-                                    setActiveItemId(secItems[0].id);
-                                  }
-                                }}
-                                className="p-3 flex items-center justify-between gap-2 border-b border-slate-200/60 cursor-pointer"
-                              >
-                                <div className="flex-1 flex items-center space-x-2">
-                                  <span className="w-5 h-5 rounded bg-blue-900 text-white text-[10px] font-mono font-bold flex items-center justify-center shrink-0">
-                                    {secIdx + 1}
-                                  </span>
-                                  <input
-                                    type="text"
-                                    value={sec.title}
-                                    onClick={(e) => e.stopPropagation()}
-                                    onChange={(e) => handleUpdateSectionTitle(sec.id, e.target.value)}
-                                    className="w-full bg-transparent font-bold text-xs text-slate-900 focus:outline-none focus:bg-white rounded px-1.5 py-0.5 border border-transparent focus:border-blue-400"
-                                  />
-                                </div>
-
-                                <div className="flex items-center space-x-1 shrink-0">
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleAddItem(sec.id);
-                                    }}
-                                    title="Thêm Mục vào Phần này"
-                                    className="p-1 rounded bg-blue-600 text-white hover:bg-blue-700 text-[10px] font-bold flex items-center space-x-0.5 px-1.5 cursor-pointer shadow-2xs"
-                                  >
-                                    <Plus className="w-3 h-3" />
-                                    <span>Mục</span>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={(e) => handleDeleteSection(sec.id, e)}
-                                    title="Xóa Phần này"
-                                    className="p-1.5 rounded text-red-500 hover:bg-red-50 hover:text-red-700 transition-colors cursor-pointer"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                </div>
-                              </div>
-
-                              {/* Items List inside Section */}
-                              <div className="p-2 space-y-1 bg-white rounded-b-xl">
-                                {secItems.length === 0 ? (
-                                  <div className="text-[11px] text-slate-400 italic text-center py-2">
-                                    Chưa có Mục nào trong Phần này. Bấm "+ Mục" để thêm.
-                                  </div>
-                                ) : (
-                                  secItems.map((item) => {
-                                    const isItemActive = activeItemId === item.id;
-                                    const itemQuestionsCount = questions.filter(q => q.itemId === item.id).length;
-
-                                    return (
-                                      <div
-                                        key={item.id}
-                                        onClick={() => {
-                                          setActiveSectionId(sec.id);
-                                          setActiveItemId(item.id);
-                                        }}
-                                        className={`group p-2.5 rounded-lg cursor-pointer flex items-center justify-between border text-xs transition-all ${
-                                          isItemActive
-                                            ? 'bg-blue-900 text-white border-blue-900 shadow-xs'
-                                            : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-blue-50/50 hover:border-blue-300'
-                                        }`}
-                                      >
-                                        <div className="flex items-center space-x-2 flex-1 min-w-0">
-                                          <BookOpen className={`w-3.5 h-3.5 shrink-0 ${isItemActive ? 'text-amber-400' : 'text-slate-400'}`} />
-                                          <span className="font-semibold truncate">
-                                            {item.title}
-                                          </span>
-                                        </div>
-
-                                        <div className="flex items-center space-x-1.5 shrink-0 ml-2">
-                                          {itemQuestionsCount > 0 && (
-                                            <span className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded ${
-                                              isItemActive ? 'bg-amber-400 text-slate-950' : 'bg-emerald-100 text-emerald-800'
-                                            }`}>
-                                              {itemQuestionsCount} CH
-                                            </span>
-                                          )}
-                                          <button
-                                            type="button"
-                                            onClick={(e) => handleDeleteItem(item.id, e)}
-                                            title="Xóa Mục này"
-                                            className={`p-1 rounded transition-opacity cursor-pointer ${
-                                              isItemActive 
-                                                ? 'text-red-300 hover:text-white hover:bg-red-800/60' 
-                                                : 'text-red-500 hover:bg-red-50 hover:text-red-700'
-                                            }`}
-                                          >
-                                            <Trash2 className="w-3.5 h-3.5" />
-                                          </button>
-                                        </div>
-                                      </div>
-                                    );
-                                  })
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* RIGHT COLUMN: BIÊN SOẠN NỘI DUNG MỤC ĐƯỢC CHỌN & CÂU HỎI ĐÁNH GIÁ */}
-                <div className="lg:col-span-8 space-y-6">
-                  {(() => {
-                    const selectedItem = items.find(i => i.id === activeItemId);
-                    const itemQuestions = questions.filter(q => q.itemId === activeItemId);
-
-                    if (!selectedItem) {
-                      return (
-                        <div className="bg-white p-12 rounded-2xl border border-dashed border-slate-300 text-center space-y-3">
-                          <BookOpen className="w-12 h-12 mx-auto text-slate-300" />
-                          <h4 className="text-sm font-bold text-slate-700">Vui lòng chọn hoặc tạo một Mục để biên soạn nội dung</h4>
-                          <p className="text-xs text-slate-400 max-w-md mx-auto">
-                            Chọn một Mục từ cây cấu trúc ở cột bên trái để chỉnh sửa văn bản bài giảng và tạo các câu hỏi đánh giá nhận thức tương tác.
-                          </p>
-                        </div>
-                      );
-                    }
-
-                    return (
-                      <div className="bg-white p-6 rounded-2xl border-2 border-blue-500/30 shadow-lg space-y-6 animate-fadeIn">
-                        {/* ITEM HEADER & TITLE INPUT */}
-                        <div className="border-b border-slate-200 pb-4 space-y-3">
-                          <div className="flex items-center justify-between">
-                            <span className="bg-blue-100 text-blue-900 text-[10px] font-bold px-2.5 py-1 rounded-md uppercase font-mono">
-                              ĐANG BIÊN SOẠN MỤC NỘI DUNG
-                            </span>
-                            <span className="text-xs font-mono text-slate-600">
-                              ID: {selectedItem.id}
-                            </span>
-                          </div>
-
-                          <div>
-                            <label className="block text-xs font-bold text-slate-700 mb-1">
-                              Tiêu đề Mục nội dung <span className="text-red-500">*</span>
-                            </label>
-                            <input
-                              type="text"
-                              value={selectedItem.title}
-                              onChange={(e) => handleUpdateActiveItem({ title: e.target.value })}
-                              placeholder="Ví dụ: Mục 1.1: Vị trí, vai trò của công tác Giáo dục chính trị tại đơn vị"
-                              className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-900 text-sm font-bold focus:outline-none focus:border-blue-500 focus:bg-white transition-all"
-                            />
-                          </div>
-                        </div>
-
-                        {/* ITEM BODY CONTENT EDITOR */}
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between">
-                            <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                              <FileText className="w-4 h-4 text-blue-600" />
-                              <span>Nội dung bài giảng Giáo dục chính trị (Văn bản chuẩn)</span>
-                            </label>
-                            <div className="flex items-center space-x-1.5">
-                              <button
-                                type="button"
-                                onClick={() => handleUpdateActiveItem({ bodyHtml: selectedItem.bodyHtml + '\n<p><strong>Nội dung trọng tâm:</strong> ...</p>' })}
-                                className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[11px] font-bold border border-slate-200"
-                              >
-                                + Đoạn in đậm
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleUpdateActiveItem({ bodyHtml: selectedItem.bodyHtml + '\n<ul>\n  <li>Ý thứ nhất...</li>\n  <li>Ý thứ hai...</li>\n</ul>' })}
-                                className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[11px] font-bold border border-slate-200"
-                              >
-                                + Danh sách
-                              </button>
-                            </div>
-                          </div>
-
-                          <textarea
-                            rows={10}
-                            value={selectedItem.bodyHtml}
-                            onChange={(e) => handleUpdateActiveItem({ bodyHtml: e.target.value })}
-                            placeholder="Nhập toàn bộ nội dung chi tiết bài giảng cho Mục này (hỗ trợ văn bản thuần và định dạng HTML)..."
-                            className="w-full bg-slate-50 border border-slate-300 rounded-xl p-4 text-slate-900 text-xs font-sans leading-relaxed focus:outline-none focus:border-blue-500 focus:bg-white shadow-2xs font-mono"
-                          />
-                        </div>
-
-                        {/* ASSESSMENT QUESTIONS SECTION FOR THIS ITEM */}
-                        <div className="p-5 bg-gradient-to-br from-blue-50/80 via-white to-slate-50 border-2 border-blue-200 rounded-2xl space-y-4 shadow-2xs">
-                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-blue-200 pb-3">
-                            <div>
-                              <div className="flex items-center space-x-2">
-                                <Award className="w-5 h-5 text-blue-700" />
-                                <h4 className="text-xs font-bold text-blue-950 uppercase tracking-wide">
-                                  CÂU HỎI ĐÁNH GIÁ CUỐI MỤC ({itemQuestions.length} CÂU HỎI)
-                                </h4>
-                              </div>
-                              <p className="text-[11px] text-blue-800 mt-0.5">
-                                Các câu hỏi kiểm tra nhận thức bắt buộc chiến sĩ trả lời để hoàn thành Mục bài học này.
-                              </p>
-                            </div>
-
-                            <div className="flex items-center space-x-2">
-                              <button
-                                onClick={() => handleAiSuggestQuestions(selectedItem)}
-                                className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs px-3 py-1.5 rounded-lg flex items-center space-x-1 shadow-2xs transition-all"
-                              >
-                                <Sparkles className="w-3.5 h-3.5" />
-                                <span>GỢI Ý CÂU HỎI TỰ ĐỘNG</span>
-                              </button>
-                              <button
-                                onClick={() => handleAddQuestionToItem(selectedItem.id)}
-                                className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-3 py-1.5 rounded-lg flex items-center space-x-1 shadow-2xs transition-all"
-                              >
-                                <Plus className="w-3.5 h-3.5" />
-                                <span>Thêm Câu hỏi</span>
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* QUESTIONS LIST */}
-                          {itemQuestions.length === 0 ? (
-                            <div className="text-center py-6 text-slate-500 text-xs bg-white rounded-xl border border-dashed border-slate-300 space-y-1">
-                              <HelpCircle className="w-6 h-6 mx-auto text-slate-400" />
-                              <p className="font-bold text-slate-700">Chưa có câu hỏi đánh giá nào cho Mục này</p>
-                              <p className="text-[11px] text-slate-400">Bấm <strong>"GỢI Ý CÂU HỎI TỰ ĐỘNG"</strong> hoặc <strong>"Thêm Câu hỏi"</strong> để bổ sung.</p>
-                            </div>
-                          ) : (
-                            <div className="space-y-4">
-                              {itemQuestions.map((q, qIdx) => (
-                                <div
-                                  key={q.id}
-                                  className="bg-white p-4 rounded-xl border border-blue-200 shadow-2xs space-y-3"
-                                >
-                                  <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                                    <span className="text-xs font-bold text-blue-900 flex items-center gap-1.5">
-                                      <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-[10px] font-bold flex items-center justify-center">
-                                        {qIdx + 1}
-                                      </span>
-                                      <span>Câu hỏi #{qIdx + 1}</span>
-                                    </span>
-
-                                    <div className="flex items-center space-x-2">
-                                      <select
-                                        value={q.type || 'single_choice'}
-                                        onChange={(e) => handleQuestionTypeChange(q.id, e.target.value as QuestionType)}
-                                        className="bg-slate-50 border border-slate-300 rounded-lg text-[11px] font-bold text-slate-800 p-1.5 focus:border-blue-500 focus:outline-none cursor-pointer"
-                                      >
-                                        <option value="single_choice">Trắc nghiệm 1 đáp án</option>
-                                        <option value="multiple_choice">Trắc nghiệm nhiều đáp án</option>
-                                        <option value="true_false">Đúng / Sai</option>
-                                        <option value="short_answer">Câu trả lời ngắn</option>
-                                        <option value="essay">Tự luận / Trả lời mở</option>
-                                      </select>
-
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleDeleteQuestion(q.id);
-                                        }}
-                                        className="text-red-500 hover:text-red-700 p-1.5 rounded hover:bg-red-50 transition-colors cursor-pointer"
-                                        title="Xóa câu hỏi này"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                      </button>
-                                    </div>
-                                  </div>
-
-                                  {/* Question Input */}
-                                  <div>
-                                    <label className="text-[11px] font-bold text-slate-700 mb-1 block">Nội dung câu hỏi:</label>
-                                    <input
-                                      type="text"
-                                      value={q.question}
-                                      onChange={(e) => handleUpdateQuestion(q.id, { question: e.target.value })}
-                                      placeholder="Nhập nội dung câu hỏi kiểm tra / nhận thức..."
-                                      className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-xs text-slate-900 font-bold focus:outline-none focus:border-blue-500"
-                                    />
-                                  </div>
-
-                                  {/* CONDITIONAL RENDERING: Short Answer / Essay vs Multiple Choice Options */}
-                                  {(q.type === 'short_answer' || q.type === 'essay') ? (
-                                    <div className="space-y-1.5 bg-slate-50 p-3 rounded-lg border border-slate-200">
-                                      <div className="flex items-center justify-between">
-                                        <label className="text-[11px] font-bold text-slate-700">
-                                          Đáp án gợi ý / Từ khóa chuẩn / Hướng dẫn chấm:
-                                        </label>
-                                        <span className="text-[10px] font-semibold text-blue-700 bg-blue-100/80 px-2 py-0.5 rounded border border-blue-200">
-                                          {q.type === 'essay' ? 'Câu hỏi tự luận' : 'Câu trả lời ngắn'}
-                                        </span>
-                                      </div>
-                                      <textarea
-                                        rows={3}
-                                        value={typeof q.correctAnswer === 'string' ? q.correctAnswer : (q.explanation || '')}
-                                        onChange={(e) => {
-                                          const val = e.target.value;
-                                          handleUpdateQuestion(q.id, {
-                                            correctAnswer: val,
-                                            explanation: val
-                                          });
-                                        }}
-                                        placeholder="Nhập nội dung câu trả lời chuẩn, các từ khóa trọng tâm hoặc barem hướng dẫn chấm cho học viên..."
-                                        className="w-full bg-white border border-slate-300 rounded-lg p-2.5 text-xs text-slate-900 font-medium focus:outline-none focus:border-blue-500 leading-relaxed resize-y"
-                                      />
-                                      <p className="text-[10px] text-slate-500 italic">
-                                        * Đối với dạng câu hỏi này, học viên sẽ làm bài bằng cách gõ văn bản câu trả lời hoặc cán bộ chấm trực tiếp.
-                                      </p>
-                                    </div>
-                                  ) : (
-                                    /* Options List for Single Choice, Multiple Choice, True/False */
-                                    <div className="space-y-1.5">
-                                      <label className="text-[11px] font-bold text-slate-700 flex items-center justify-between">
-                                        <span>Các phương án & Chọn đáp án đúng:</span>
-                                        <span className="text-[10px] font-normal text-slate-500">
-                                          {q.type === 'multiple_choice'
-                                            ? '(Bấm chữ cái để chọn nhiều đáp án đúng)'
-                                            : q.type === 'true_false'
-                                            ? '(Chọn Đúng hoặc Sai)'
-                                            : '(Bấm chữ cái để chọn 1 đáp án đúng)'}
-                                        </span>
-                                      </label>
-                                      {(q.options && q.options.length > 0 ? q.options : (q.type === 'true_false' ? ['Đúng', 'Sai'] : ['Phương án A', 'Phương án B', 'Phương án C', 'Phương án D'])).map((opt, optIdx) => {
-                                        const isCorrect = Array.isArray(q.correctAnswer)
-                                          ? q.correctAnswer.includes(optIdx)
-                                          : q.correctAnswer === optIdx;
-                                        return (
-                                          <div
-                                            key={optIdx}
-                                            className={`flex items-center space-x-2 p-2 rounded-lg border text-xs transition-all ${
-                                              isCorrect ? 'bg-emerald-50 border-emerald-400' : 'bg-slate-50 border-slate-200'
-                                            }`}
-                                          >
-                                            <button
-                                              type="button"
-                                              onClick={() => {
-                                                if (q.type === 'multiple_choice') {
-                                                  const currentList = Array.isArray(q.correctAnswer)
-                                                    ? q.correctAnswer
-                                                    : [typeof q.correctAnswer === 'number' ? q.correctAnswer : 0];
-                                                  const nextList = isCorrect
-                                                    ? currentList.filter(c => c !== optIdx)
-                                                    : [...currentList, optIdx];
-                                                  handleUpdateQuestion(q.id, { correctAnswer: nextList.length > 0 ? nextList : [optIdx] });
-                                                } else {
-                                                  handleUpdateQuestion(q.id, { correctAnswer: optIdx });
-                                                }
-                                              }}
-                                              className={`w-6 h-6 rounded font-bold text-[10px] flex items-center justify-center shrink-0 transition-colors cursor-pointer ${
-                                                isCorrect ? 'bg-emerald-600 text-white shadow-xs' : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
-                                              }`}
-                                              title={isCorrect ? 'Đáp án đúng' : 'Bấm để đặt làm đáp án đúng'}
-                                            >
-                                              {q.type === 'true_false' ? (optIdx === 0 ? 'Đ' : 'S') : String.fromCharCode(65 + optIdx)}
-                                            </button>
-
-                                            <input
-                                              type="text"
-                                              value={opt}
-                                              onChange={(e) => {
-                                                const baseOpts = q.options && q.options.length > 0
-                                                  ? [...q.options]
-                                                  : (q.type === 'true_false' ? ['Đúng', 'Sai'] : ['Phương án A', 'Phương án B', 'Phương án C', 'Phương án D']);
-                                                baseOpts[optIdx] = e.target.value;
-                                                handleUpdateQuestion(q.id, { options: baseOpts });
-                                              }}
-                                              placeholder={`Nội dung phương án ${String.fromCharCode(65 + optIdx)}`}
-                                              className="flex-1 bg-transparent border-0 text-xs text-slate-800 focus:outline-none font-medium"
-                                            />
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  )}
-
-                                  {/* Explanation (for all question types) */}
-                                  <div>
-                                    <label className="text-[11px] font-bold text-slate-600 mb-0.5 block">Lời giải thích chi tiết / Căn cứ tài liệu:</label>
-                                    <input
-                                      type="text"
-                                      value={q.explanation || ''}
-                                      onChange={(e) => handleUpdateQuestion(q.id, { explanation: e.target.value })}
-                                      placeholder="Giải thích lý do lựa chọn đáp án hoặc trích dẫn tài liệu..."
-                                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-[11px] text-slate-800 focus:outline-none focus:border-blue-400"
-                                    />
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </div>
-              </div>
-
-              {/* STRUCTURE PROPOSAL MODAL (ĐỀ XUẤT CẤU TRÚC AI/DOC PARSER) */}
-              {proposalModalOpen && parsedProposal && (
-                <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-                  <div className="bg-slate-900 text-white p-6 rounded-2xl max-w-2xl w-full border border-amber-500/50 shadow-2xl space-y-4 max-h-[85vh] flex flex-col">
-                    <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                      <div className="flex items-center space-x-2">
-                        <Sparkles className="w-5 h-5 text-amber-400" />
-                        <h4 className="text-base font-bold text-white">ĐỀ XUẤT CẤU TRÚC TÀI LIỆU BÀI GIẢNG</h4>
-                      </div>
-                      <span className="text-xs font-mono text-amber-400">
-                        Phát hiện: {(parsedProposal.proposedSections || parsedProposal.sections || []).length} Phần
-                      </span>
-                    </div>
-
-                    <p className="text-xs text-slate-300">
-                      Hệ thống đã phân tích file tài liệu và tạo đề xuất cấu trúc phân chia bài giảng theo chuẩn GDCT. Bạn có thể chấp nhận cấu trúc này hoặc hủy để biên soạn thủ công.
-                    </p>
-
-                    <div className="flex-1 overflow-y-auto space-y-3 bg-slate-950 p-4 rounded-xl border border-slate-800 text-xs font-mono">
-                      {(parsedProposal.proposedSections || parsedProposal.sections || []).map((sec, idx) => (
-                        <div key={idx} className="space-y-1.5 border-b border-slate-800/80 pb-2">
-                          <div className="font-bold text-amber-300">
-                            {sec.title || `PHẦN ${idx + 1}`}
-                          </div>
-                          <div className="pl-4 space-y-1 text-slate-300 text-[11px]">
-                            {(sec.items || []).map((item, iIdx) => (
-                              <div key={iIdx} className="flex items-center justify-between">
-                                <span>• {item.title || `Mục ${iIdx + 1}`}</span>
-                                <span className="text-slate-500">({(item.bodyHtml || '').length} ký tự)</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="flex justify-end space-x-3 pt-2 border-t border-slate-800">
-                      <button
-                        onClick={() => setProposalModalOpen(false)}
-                        className="px-4 py-2 bg-slate-800 text-slate-300 rounded-xl text-xs font-bold hover:bg-slate-700"
-                      >
-                        Hủy & Biên soạn thủ công
-                      </button>
-                      <button
-                        disabled={isSavingStructuredContent}
-                        onClick={handleConfirmProposal}
-                        className="px-5 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 rounded-xl text-xs font-bold shadow-lg flex items-center space-x-1.5 disabled:opacity-50"
-                      >
-                        <CheckCircle2 className="w-4 h-4" />
-                        <span>{isSavingStructuredContent ? 'Đang áp dụng...' : 'CHẤP NHẬN & ÁP DỤNG CẤU TRÚC NÀY'}</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* PRESETS LIBRARY MODAL (MẪU KINH ĐIỂN VÀ LỜI BÁC DẠY) */}
-              {showPresetsLibrary && (
-                <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-                  <div className="bg-white text-slate-900 p-6 rounded-2xl max-w-lg w-full border border-slate-300 shadow-2xl space-y-4">
-                    <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-                      <div className="flex items-center space-x-2">
-                        <Library className="w-5 h-5 text-blue-600" />
-                        <h4 className="text-base font-bold text-slate-900">Thư viện Mẫu Bài giảng & Lời Bác dạy</h4>
-                      </div>
-                      <button onClick={() => setShowPresetsLibrary(false)} className="text-slate-400 hover:text-slate-700">✕</button>
-                    </div>
-
-                    <p className="text-xs text-slate-600">
-                      Chọn một mẫu chuẩn có sẵn để thêm nhanh vào cấu trúc bài học hiện tại:
-                    </p>
-
-                    <div className="space-y-2">
-                      {UNCLE_HO_PRESETS.map((preset, idx) => (
-                        <div
-                          key={idx}
-                          onClick={async () => {
-                            const newSec = await api.createSection(currentLesson.id, {
-                              title: `PHẦN ${sections.length + 1}: LỜI DẠY CỦA CHỦ TỊCH HỒ CHÍ MINH`,
-                              order: sections.length + 1
-                            });
-                            const newItem = await api.createItem(currentLesson.id, newSec.id, {
-                              title: preset.title,
-                              bodyHtml: `<blockquote style="background:#fef3c7;padding:12px;border-left:4px solid #f59e0b;">"${preset.quote}"</blockquote>` + preset.bodyHtml,
-                              order: 1
-                            });
-                            if (preset.quiz?.enabled) {
-                              await api.createQuestion(currentLesson.id, newItem.id, {
-                                question: preset.quiz.question,
-                                type: 'single_choice',
-                                options: preset.quiz.options,
-                                correctAnswer: preset.quiz.correctOptionIndex,
-                                explanation: preset.quiz.explanation,
-                                order: 1,
-                                points: 10
-                              });
-                            }
-                            setShowPresetsLibrary(false);
-                            showToast('Đã thêm bài giảng mẫu thành công!');
-                            await loadStructuredData();
-                          }}
-                          className="p-3 bg-slate-50 hover:bg-blue-50/70 border border-slate-200 hover:border-blue-400 rounded-xl cursor-pointer transition-all space-y-1"
-                        >
-                          <h5 className="text-xs font-bold text-blue-900">{preset.name}</h5>
-                          <p className="text-[11px] text-slate-600 line-clamp-2">"{preset.quote}"</p>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="flex justify-end pt-2">
-                      <button
-                        onClick={() => setShowPresetsLibrary(false)}
-                        className="px-4 py-2 bg-slate-200 text-slate-700 rounded-xl text-xs font-bold hover:bg-slate-300"
-                      >
-                        Đóng
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Bottom Push To App & Firebase Sync Bar */}
-              <div className="mt-8 p-6 bg-gradient-to-r from-blue-900 via-indigo-950 to-slate-900 rounded-2xl border border-blue-500/30 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4 text-white">
-                <div className="flex items-center space-x-3">
-                  <div className="p-3 bg-blue-600/30 border border-blue-400/30 rounded-xl text-blue-300 shrink-0">
-                    <Upload className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold uppercase tracking-wider text-blue-100">Đồng bộ cấu trúc & nội dung bài học</h4>
-                    <p className="text-xs text-blue-200/80 mt-0.5">
-                      Sau khi chỉnh sửa cấu trúc (Phần, Mục) hoặc nội dung/câu hỏi, bấm nút bên cạnh để đẩy dữ liệu lên ứng dụng và đồng bộ tức thì trên Firebase.
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  id="btn-push-to-app-firebase"
-                  disabled={isPushingToApp}
-                  onClick={handlePushToAppAndFirebase}
-                  className="px-6 py-3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-extrabold text-xs rounded-xl shadow-lg transition-all transform active:scale-95 disabled:opacity-50 flex items-center space-x-2 shrink-0 cursor-pointer"
-                >
-                  <RefreshCw className={`w-4 h-4 ${isPushingToApp ? 'animate-spin' : ''}`} />
-                  <span>{isPushingToApp ? 'Đang đẩy lên ứng dụng...' : 'Đẩy lên ứng dụng & Firebase'}</span>
-                </button>
+                )}
               </div>
             </div>
           )}
@@ -3934,46 +3341,7 @@ export const LessonEditorView: React.FC<LessonEditorViewProps> = ({
       )}
 
 
-      {/* Modal: Delete Source Document Confirmation */}
-      {showDeleteDocModal && sourceDoc && (
-        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl p-6 space-y-5">
-            <div className="flex items-center space-x-3 text-red-600 border-b border-slate-100 pb-3">
-              <div className="p-2.5 bg-red-100 rounded-xl text-red-600 shrink-0">
-                <AlertTriangle className="w-6 h-6" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wide">XÁC NHẬN XÓA TÀI LIỆU</h3>
-                <p className="text-[11px] text-slate-500 font-medium truncate max-w-xs">{sourceDoc.name || sourceDoc.fileName}</p>
-              </div>
-            </div>
 
-            <div className="p-4 bg-red-50/80 border border-red-200 rounded-xl text-xs text-slate-800 leading-relaxed space-y-2">
-              <p className="font-semibold text-red-950">
-                Hành động này sẽ xóa hoàn toàn file gốc trên Cloudinary cùng toàn bộ Phần, Mục, nội dung bài giảng và câu hỏi đã tạo từ tài liệu này (đưa về trạng thái chưa đăng tài liệu). Bạn có chắc chắn muốn xóa?
-              </p>
-            </div>
-
-            <div className="flex justify-end space-x-2 pt-2 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => setShowDeleteDocModal(false)}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-xs cursor-pointer transition-colors"
-              >
-                Hủy
-              </button>
-              <button
-                type="button"
-                onClick={handleExecuteDeleteSourceDoc}
-                className="px-5 py-2 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl shadow-xs text-xs cursor-pointer transition-all active:scale-95 flex items-center space-x-1.5"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>Xác nhận Xóa</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

@@ -646,6 +646,10 @@ export const api = {
     return await firestoreService.getSourceDocument(lessonId);
   },
 
+  getSourceDocuments: async (lessonId: string): Promise<SourceDocument[]> => {
+    return await firestoreService.getSourceDocuments(lessonId);
+  },
+
   deleteDocumentContentOnly: async (lessonId: string, documentId: string) => {
     return await firestoreService.deleteDocumentContentOnly(lessonId, documentId);
   },
